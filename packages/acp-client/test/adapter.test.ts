@@ -1,3 +1,4 @@
+import type { RuntimeEvent } from "@remote-agent-console/runtime-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAcpRuntimeAdapter } from "../src/index.js";
 
@@ -72,6 +73,34 @@ describe("ACP runtime adapter", () => {
     });
     await session.prompt("cancel while permission is pending");
     await canceled;
+  });
+
+  it("uses unique permission ids across independent runtime connections", async () => {
+    const [firstConnection, secondConnection] = await Promise.all([
+      adapter().connect({ projectId: "demo" }),
+      adapter().connect({ projectId: "demo" }),
+    ]);
+    const [first, second] = await Promise.all([
+      firstConnection.createSession(),
+      secondConnection.createSession(),
+    ]);
+    sessions.push(first, second);
+    const ids = new Set<string>();
+    const done = new Promise<void>((resolve) => {
+      let completed = 0;
+      const receive = (session: typeof first, event: RuntimeEvent) => {
+        if (event.type === "permission.requested") {
+          ids.add(event.permissionId);
+          void session.resolvePermission(event.permissionId, "allow-once");
+        }
+        if (event.type === "turn.completed" && ++completed === 2) resolve();
+      };
+      first.subscribe((event) => receive(first, event));
+      second.subscribe((event) => receive(second, event));
+    });
+    await Promise.all([first.prompt("first"), second.prompt("second")]);
+    await done;
+    expect(ids.size).toBe(2);
   });
 
   it("rejects connection setup when the child exits before ACP initialization", async () => {
