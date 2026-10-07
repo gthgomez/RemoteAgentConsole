@@ -10,6 +10,7 @@ export type RuntimeEvent = EventEnvelope extends infer E
 export interface RuntimeSessionPort {
   prompt(turnId: string, text: string): Promise<void>;
   cancel(turnId: string): Promise<void>;
+  /** A successful response is reported through the session's onEvent callback. */
   respondPermission(permissionId: string, optionId: string): Promise<void>;
 }
 
