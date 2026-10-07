@@ -16,6 +16,7 @@ export interface RuntimeSessionPort {
 /** Narrow seam for a runtime-core adapter; ACP details stay behind this port. */
 export interface RuntimeSupervisorPort {
   runtimes(): readonly RuntimeSummary[];
+  close?(): Promise<void>;
   createSession(input: {
     sessionId: string;
     projectId: string;

@@ -45,6 +45,9 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
   const store = options.store ?? new InMemoryHostStore();
   const makeId = options.makeId ?? ((kind: string) => `${kind}-${randomUUID()}`);
   const projects = new Map(options.projects.map((project) => [project.id, project]));
+  app.addHook("onClose", async () => {
+    if (options.supervisor.close) await options.supervisor.close();
+  });
   const createInFlight = new Map<
     string,
     { fingerprint: string; promise: Promise<IdempotencyResult> }
@@ -434,6 +437,7 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
         connection: "keep-alive",
         "x-accel-buffering": "no",
       });
+      reply.raw.flushHeaders();
       const writeEvent = (event: EventEnvelope) => {
         reply.raw.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
       };
@@ -446,5 +450,6 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
   return app;
 }
 
+export { createFakeRuntimeSupervisor } from "./fake-runtime.js";
 export type { RuntimeEvent, RuntimeSessionPort, RuntimeSupervisorPort } from "./ports.js";
 export { InMemoryHostStore } from "./store.js";
