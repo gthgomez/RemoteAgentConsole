@@ -68,15 +68,26 @@ export const runtimeCapabilitiesSchema = z
   .strict();
 export type RuntimeCapabilities = z.infer<typeof runtimeCapabilitiesSchema>;
 
-export const runtimeSummarySchema = z
-  .object({
-    id: nonEmpty,
-    displayName: nonEmpty,
-    installed: z.boolean(),
-    version: nonEmpty.optional(),
-    capabilities: runtimeCapabilitiesSchema.nullable(),
-  })
-  .strict();
+export const runtimeSummarySchema = z.discriminatedUnion("installed", [
+  z
+    .object({
+      id: nonEmpty,
+      displayName: nonEmpty,
+      installed: z.literal(true),
+      version: nonEmpty.optional(),
+      capabilities: runtimeCapabilitiesSchema,
+    })
+    .strict(),
+  z
+    .object({
+      id: nonEmpty,
+      displayName: nonEmpty,
+      installed: z.literal(false),
+      version: nonEmpty.optional(),
+      capabilities: z.null(),
+    })
+    .strict(),
+]);
 export type RuntimeSummary = z.infer<typeof runtimeSummarySchema>;
 
 export const sessionCreatedPayloadSchema = z
