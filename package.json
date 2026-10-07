@@ -1,0 +1,25 @@
+{
+  "name": "remote-agent-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.1",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "check:workspace": "node scripts/check-workspace.mjs",
+    "dev": "pnpm --recursive --parallel --if-present dev",
+    "build": "pnpm --recursive --if-present build",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "typecheck": "pnpm --recursive --if-present typecheck",
+    "test": "pnpm --recursive --if-present test",
+    "verify": "pnpm check:workspace && biome check . && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
+    "typescript": "^5.9.3"
+  }
+}
