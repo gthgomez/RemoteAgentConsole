@@ -264,7 +264,15 @@ export const acceptedResponseSchema = z
   .strict();
 export type AcceptedResponse = z.infer<typeof acceptedResponseSchema>;
 export const apiErrorSchema = z
-  .object({ error: z.object({ code: nonEmpty, message: nonEmpty }).strict() })
+  .object({
+    error: z
+      .object({
+        code: nonEmpty,
+        message: nonEmpty,
+        oldestSequence: z.number().int().positive().optional(),
+      })
+      .strict(),
+  })
   .strict();
 export type ApiError = z.infer<typeof apiErrorSchema>;
 
