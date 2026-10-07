@@ -175,9 +175,18 @@ importers:
 
   apps/host:
     dependencies:
+      '@remote-agent-console/acp-client':
+        specifier: workspace:*
+        version: link:../../packages/acp-client
       '@remote-agent-console/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@remote-agent-console/runtime-core':
+        specifier: workspace:*
+        version: link:../../packages/runtime-core
+      '@remote-agent-console/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
       fastify:
         specifier: ^5.6.1
         version: 5.12.5
