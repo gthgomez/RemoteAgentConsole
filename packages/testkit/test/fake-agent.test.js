@@ -35,6 +35,12 @@ function startAgent() {
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
+  child.on("exit", (code, signal) => {
+    for (const waiter of waiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error(`ACP child process exited with code ${code} and signal ${signal}`));
+    }
+  });
   let nextId = 1;
   const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
   const request = (method, params = {}) => {
@@ -46,22 +52,24 @@ function startAgent() {
     const found = messages.find(match);
     if (found) return Promise.resolve(found);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const i = waiters.findIndex((w) => w.resolve === resolve);
-        if (i >= 0) waiters.splice(i, 1);
-        reject(
-          new Error(
-            `Timed out waiting for ACP message; messages=${JSON.stringify(messages)}; stderr=${stderr}`,
-          ),
-        );
-      }, timeout);
-      waiters.push({
+      const waiter = {
         match,
+        timer: setTimeout(() => {
+          const i = waiters.indexOf(waiter);
+          if (i >= 0) waiters.splice(i, 1);
+          reject(
+            new Error(
+              `Timed out waiting for ACP message; messages=${JSON.stringify(messages)}; stderr=${stderr}`,
+            ),
+          );
+        }, timeout),
         resolve: (value) => {
-          clearTimeout(timer);
+          clearTimeout(waiter.timer);
           resolve(value);
         },
-      });
+        reject: (error) => reject(error),
+      };
+      waiters.push(waiter);
     });
   };
   const close = async () => {
@@ -230,6 +238,24 @@ test("cancels an in-flight prompt", async (t) => {
   );
   agent.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: "fake-session" } });
   assert.equal((await prompt).result.stopReason, "cancelled");
+});
+
+test("reports child process failure when the crash prompt is accepted", async (t) => {
+  const agent = startAgent();
+  t.after(() => agent.close());
+  await agent.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  await agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
+  const prompt = agent.request("session/prompt", {
+    sessionId: "fake-session",
+    prompt: [{ type: "text", text: "crash" }],
+  });
+
+  await assert.rejects(prompt, /ACP child process exited with code 42/);
+  assert.equal(agent.child.exitCode, 42);
+  assert.equal(
+    agent.messages.some((message) => message.id === 3 && "result" in message),
+    false,
+  );
 });
 
 test("ignores a malformed frame, remains usable, and exits cleanly on stdin close", async () => {
