@@ -23,7 +23,6 @@ app.onRequest('initialize', ({ params }) => ({
 
 app.onRequest('session/new', () => {
   created = true;
-  promptSequence = 0;
   return {
     sessionId: SESSION_ID,
     modes: { currentModeId: 'normal', availableModes: MODES },

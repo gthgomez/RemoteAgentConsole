@@ -108,6 +108,28 @@ test('uses a distinct deterministic tool call id for each prompt in one session'
   assert.notEqual(toolIds[0], toolIds[1]);
 });
 
+test('keeps tool call ids unique when session/new returns the same session id again', async t => {
+  const agent = startAgent();
+  t.after(() => agent.close());
+  await agent.request('initialize', { protocolVersion: 1, clientCapabilities: {} });
+  const session1 = await agent.request('session/new', { cwd: process.cwd(), mcpServers: [] });
+  const toolIds = [];
+  const runApprovedPrompt = async (turn, promptText) => {
+    const prompt = agent.request('session/prompt', { sessionId: session1.result.sessionId, prompt: [{ type: 'text', text: promptText }] });
+    const expectedId = `fake-status-tool-${turn}`;
+    const permission = await agent.waitFor(message => message.method === 'session/request_permission' && message.params.toolCall.toolCallId === expectedId);
+    toolIds.push(permission.params.toolCall.toolCallId);
+    agent.send({ jsonrpc: '2.0', id: permission.id, result: { outcome: { outcome: 'selected', optionId: 'allow-once' } } });
+    assert.equal((await prompt).result.stopReason, 'end_turn');
+  };
+
+  await runApprovedPrompt(1, 'after first new');
+  const session2 = await agent.request('session/new', { cwd: process.cwd(), mcpServers: [] });
+  assert.equal(session1.result.sessionId, session2.result.sessionId);
+  await runApprovedPrompt(2, 'after second new');
+  assert.deepEqual(toolIds, ['fake-status-tool-1', 'fake-status-tool-2']);
+});
+
 test('cancels an in-flight prompt', async t => {
   const agent = startAgent();
   t.after(() => agent.close());
