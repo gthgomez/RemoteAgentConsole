@@ -17,6 +17,7 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
+    "@fastify/static": "^10.1.5",
     "@remote-agent-console/acp-client": "workspace:*",
     "@remote-agent-console/contracts": "workspace:*",
     "@remote-agent-console/runtime-command-code": "workspace:*",

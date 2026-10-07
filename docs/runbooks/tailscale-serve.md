@@ -4,34 +4,35 @@ This runbook describes the intended private access path for a phone on the same 
 
 ## Readiness gate
 
-**Do not expose the current development stack yet.** As of 2026-10-07, the host binds to `127.0.0.1`, but the device-pairing primitives are not wired into API authentication, and the production host does not serve the PWA. See [STATUS](../STATUS.md). Tailscale access controls are a network layer, not a replacement for application authentication. Use this runbook only after host API routes require a paired device credential and the intended web build is available.
+The production host serves the built PWA and API from one loopback service. API routes require a paired device credential; static app-shell files are public so the pairing screen can load. Tailscale access controls are an additional network layer, not a replacement for application authentication. See [STATUS](../STATUS.md) for remaining acceptance work.
 
-For the current development layout, `pnpm dev` starts the Vite PWA on `127.0.0.1:5173` (Vite's default port) and the API on `127.0.0.1:4318`; Vite proxies `/api` to the API. When that layout is used for a gated private smoke test, Serve the **PWA port** so the phone and API share the same origin. Never bind either service to `0.0.0.0`.
+For development, `pnpm dev` starts Vite on `127.0.0.1:5173` and the API on `127.0.0.1:4318`; Vite proxies `/api` to the API. Serve the PWA port for a development smoke test so the phone and API share an origin. For regular use, build and run the single production host service below. Never bind either service to `0.0.0.0`.
 
 ## Preconditions
 
 - The host and Android phone are signed in to the intended Tailscale tailnet.
 - Tailnet access rules allow the phone's user/device to reach the host.
 - The application has device authentication enabled and a phone has been paired. Do not rely on Tailscale identity headers unless the host explicitly validates them.
-- The host is running, the Vite output confirms `127.0.0.1:5173`, and the API health endpoint responds locally at `http://127.0.0.1:4318/api/v1/health`.
+- The production build is current and the host is running on `127.0.0.1:4318`.
 - HTTPS certificates are enabled for the tailnet. Serve will prompt for any unmet setup requirement.
 
 ## Start and verify
 
-In a terminal on the host, start the application. In the current development layout:
+Build and start the production host on the laptop:
 
 ```sh
-pnpm dev
+pnpm build
+RAC_PROJECTS_JSON='[{"id":"demo","displayName":"Demo project","path":"/home/me/code/Demo"}]' pnpm --filter @remote-agent-console/host start
 ```
 
-In another terminal, start a background Serve proxy to the local Vite port:
+In another terminal, start a background Serve proxy to the host:
 
 ```sh
-tailscale serve --bg 5173
+tailscale serve --bg 4318
 tailscale serve status
 ```
 
-Use the HTTPS URL printed by Serve (or shown by `tailscale serve status`). The `5173` target is the local HTTP port; Serve supplies the tailnet HTTPS endpoint. The URL is reachable only according to the tailnet's access controls. Serve forwards to a loopback service and does not require opening an inbound router port. On Windows, run the port-forwarding command in a normal terminal; the Tailscale examples state that an Administrator console is not required for forwarding ports.
+Use the HTTPS URL printed by Serve (or shown by `tailscale serve status`). The `4318` target is the local HTTP port; Serve supplies the tailnet HTTPS endpoint. The URL is reachable only according to the tailnet's access controls. Serve forwards to a loopback service and does not require opening an inbound router port. On Windows, run the port-forwarding command in a normal terminal; the Tailscale examples state that an Administrator console is not required for forwarding ports.
 
 On Android:
 
@@ -57,9 +58,10 @@ tailscale serve status
 
 | Symptom | Check |
 | --- | --- |
-| Serve reports HTTPS setup is incomplete | Follow the consent flow and enable HTTPS certificates for the tailnet, then rerun `tailscale serve --bg 5173`. |
+| Serve reports HTTPS setup is incomplete | Follow the consent flow and enable HTTPS certificates for the tailnet, then rerun `tailscale serve --bg 4318`. |
 | Serve URL does not load | Confirm both devices are online in Tailscale, tailnet rules allow this phone to reach the host, and `tailscale serve status` shows the endpoint. |
-| Browser connects but the page or API fails | Confirm Vite is still on `127.0.0.1:5173`, the host is on `127.0.0.1:4318`, and the host's `/api` proxy target has not changed. Vite can choose another port if 5173 is occupied; use the port shown in its startup output. |
+| Browser connects but the page is missing | Run `pnpm build` and confirm the host can read `apps/web/dist` (or the configured `RAC_WEB_DIST_PATH`). |
+| Browser connects but the API fails | Confirm the host is running on `127.0.0.1:4318` and the phone was paired with the one-time code printed at host startup. |
 | The app rejects the phone | Pair the device through the application's pairing flow. Tailscale connectivity alone does not authenticate the app. |
 | Android works on Wi-Fi but not cellular | Confirm Tailscale is connected over cellular, the phone is in the expected tailnet, and its access rules permit reaching the host. |
 
