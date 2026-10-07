@@ -39,6 +39,8 @@ export function App() {
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const applyEventRef = useRef<(event: EventEnvelope) => void>(() => {});
+  const permissionDialogRef = useRef<HTMLElement>(null);
+  useModalFocus(Boolean(permission), permissionDialogRef);
 
   useEffect(() => {
     Promise.all([client.getProjects(), client.getRuntimes(), client.getSessions()])
@@ -134,7 +136,7 @@ export function App() {
       case "turn.completed":
         setPermission(null);
         setSession((current) =>
-          current ? { ...current, activeTurnId: null, status: "completed" } : current,
+          current ? { ...current, activeTurnId: null, status: "idle" } : current,
         );
         setActivity((items) => [
           ...items,
@@ -220,7 +222,7 @@ export function App() {
         Connecting to your host…
       </main>
     );
-  if (sessionId) return <SessionView />;
+  if (sessionId) return SessionView();
   return (
     <main className="shell dashboard">
       <header className="topbar">
@@ -255,7 +257,11 @@ export function App() {
           >
             <span className="session-icon">↗</span>
             <span className="session-copy">
-              <strong>{item.projectDisplayName}</strong>
+              <strong>
+                {item.projectDisplayName ??
+                  projects.find((project) => project.id === item.projectId)?.displayName ??
+                  "Project"}
+              </strong>
               <small>
                 {item.status.replaceAll("_", " ")} · {new Date(item.updatedAt).toLocaleString()}
               </small>
@@ -379,14 +385,16 @@ export function App() {
         {permission && (
           <div className="permission-backdrop">
             <section
+              ref={permissionDialogRef}
               className="permission-sheet"
               role="dialog"
               aria-modal="true"
-              aria-label="Permission request"
+              aria-labelledby="permission-title"
+              tabIndex={-1}
             >
               <div className="sheet-handle" />
               <p className="eyebrow">ACTION NEEDED</p>
-              <h2>{permission.title}</h2>
+              <h2 id="permission-title">{permission.title}</h2>
               <p className="permission-explainer">
                 Choose an option provided by the runtime to continue.
               </p>
@@ -474,6 +482,8 @@ function CreateSessionDialog({
   onCreate(projectId: string, runtimeId: string): void;
 }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const dialogRef = useRef<HTMLFormElement>(null);
+  useModalFocus(true, dialogRef);
   const availableRuntimes = runtimes.filter(
     (runtime) => runtime.installed && runtime.capabilities.sessions.create,
   );
@@ -481,10 +491,17 @@ function CreateSessionDialog({
   return (
     <div className="dialog-backdrop">
       <form
+        ref={dialogRef}
         className="create-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-title"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+          }
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           onCreate(projectId, runtimeId);
@@ -526,6 +543,44 @@ function CreateSessionDialog({
       </form>
     </div>
   );
+}
+
+function useModalFocus(active: boolean, dialogRef: { current: HTMLElement | null }) {
+  useEffect(() => {
+    if (!active) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () =>
+      Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+    focusable()[0]?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      const first = items[0];
+      const last = items.at(-1);
+      if (!first || !last) {
+        event.preventDefault();
+        dialog.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      document.removeEventListener("keydown", trapFocus);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [active, dialogRef]);
 }
 
 function CapabilityStrip({ runtime }: { runtime: RuntimeSummary }) {
