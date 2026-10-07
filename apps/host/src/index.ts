@@ -53,6 +53,7 @@ export interface HostAppOptions {
   pairingRateLimit?: { limit: number; windowMs: number };
   authFailureRateLimit?: { limit: number; windowMs: number };
   mutationRateLimit?: { limit: number; windowMs: number };
+  sseConnectionLimits?: { global: number; perDevice: number };
   webRoot?: string;
   makeId?: (kind: "session" | "turn" | "event") => string;
 }
@@ -85,6 +86,15 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
     });
   }
   const store = options.store ?? new InMemoryHostStore();
+  const sseLimits = options.sseConnectionLimits ?? { global: 64, perDevice: 4 };
+  for (const [name, value] of Object.entries(sseLimits)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new RangeError(`sseConnectionLimits.${name} must be a positive safe integer`);
+    }
+  }
+  let activeSseCount = 0;
+  const sseCountByDevice = new Map<string, number>();
+  const activeSseReleases = new Set<() => void>();
   const rateLimiter = options.rateLimiter ?? new InMemoryRateLimiter();
   const pairingRateLimit = options.pairingRateLimit ?? { limit: 5, windowMs: 60_000 };
   const authFailureRateLimit = options.authFailureRateLimit ?? { limit: 20, windowMs: 60_000 };
@@ -93,6 +103,7 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
   const makeId = options.makeId ?? ((kind: string) => `${kind}-${randomUUID()}`);
   const projects = new Map(options.projects.map((project) => [project.id, project]));
   app.addHook("onClose", async () => {
+    for (const release of [...activeSseReleases]) release();
     if (options.supervisor.close) await options.supervisor.close();
     store.close?.();
   });
@@ -650,20 +661,57 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
       if (!store.sessions.has(sessionId))
         return reply.code(404).send(emptyError("not_found", "Session was not found"));
 
-      reply.hijack();
-      reply.raw.writeHead(200, {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache, no-transform",
-        connection: "keep-alive",
-        "x-accel-buffering": "no",
-      });
-      reply.raw.flushHeaders();
-      const writeEvent = (event: EventEnvelope) => {
-        reply.raw.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
+      const deviceId = request.authenticatedDeviceId ?? "unauthenticated";
+      const deviceCount = sseCountByDevice.get(deviceId) ?? 0;
+      if (activeSseCount >= sseLimits.global || deviceCount >= sseLimits.perDevice) {
+        return reply
+          .header("retry-after", "1")
+          .code(429)
+          .send(
+            emptyError(
+              "sse_connection_limit",
+              "Active event stream limit reached; retry after an existing stream closes",
+            ),
+          );
+      }
+
+      let subscription: ReturnType<HostStore["subscribe"]> | undefined;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        subscription?.close();
+        activeSseCount -= 1;
+        const currentDeviceCount = sseCountByDevice.get(deviceId) ?? 0;
+        if (currentDeviceCount <= 1) sseCountByDevice.delete(deviceId);
+        else sseCountByDevice.set(deviceId, currentDeviceCount - 1);
+        activeSseReleases.delete(release);
       };
-      const subscription = store.subscribe(sessionId, afterSequence, writeEvent);
-      for (const event of subscription.replay) writeEvent(event);
-      request.raw.on("close", subscription.close);
+      activeSseCount += 1;
+      sseCountByDevice.set(deviceId, deviceCount + 1);
+      activeSseReleases.add(release);
+      reply.raw.once("close", release);
+      reply.raw.once("error", release);
+      request.raw.once("aborted", release);
+
+      try {
+        reply.hijack();
+        reply.raw.writeHead(200, {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+          "x-accel-buffering": "no",
+        });
+        reply.raw.flushHeaders();
+        const writeEvent = (event: EventEnvelope) => {
+          reply.raw.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
+        };
+        subscription = store.subscribe(sessionId, afterSequence, writeEvent);
+        for (const event of subscription.replay) writeEvent(event);
+      } catch (error) {
+        release();
+        reply.raw.destroy(error instanceof Error ? error : undefined);
+      }
     },
   );
 

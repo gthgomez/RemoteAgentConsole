@@ -8,7 +8,24 @@ import { createHostApp, type RuntimeSupervisorPort } from "../../src/index.js";
 
 const project = { id: "demo", displayName: "Demo", path: "/private/demo" };
 const supervisor: RuntimeSupervisorPort = {
-  runtimes: () => [],
+  runtimes: () => [
+    {
+      id: "fake",
+      displayName: "Fake ACP",
+      installed: true,
+      version: "1.0.0",
+      capabilities: {
+        sessions: { create: true, resume: false, list: false },
+        interaction: { cancel: true, permissions: true, questions: false },
+        models: { selectable: false, effort: false },
+        modes: false,
+        plans: false,
+        commands: false,
+        images: false,
+        files: false,
+      },
+    },
+  ],
   createSession: async () => ({
     prompt: async () => {},
     cancel: async () => {},
@@ -17,6 +34,67 @@ const supervisor: RuntimeSupervisorPort = {
 };
 
 describe("device authentication routes", () => {
+  it("bounds authenticated SSE streams globally and per device, then releases slots on disconnect", async () => {
+    const pairingAuth = new PairingAuthService(new InMemoryAuthStore());
+    const firstPairing = pairingAuth.issuePairingCode();
+    const secondPairing = pairingAuth.issuePairingCode();
+    const app = createHostApp({
+      machineId: "machine-1",
+      projects: [project],
+      supervisor,
+      pairingAuth,
+      sseConnectionLimits: { global: 2, perDevice: 1 },
+    });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const pair = async (code: string, displayName: string) => {
+      const response = await fetch(`${address}/api/v1/devices/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, displayName }),
+      });
+      return (await response.json()) as { credential: string };
+    };
+    const firstDevice = await pair(firstPairing.code, "Phone one");
+    const secondDevice = await pair(secondPairing.code, "Phone two");
+    const created = await fetch(`${address}/api/v1/sessions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${firstDevice.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ requestId: "stream-session", projectId: "demo", runtimeId: "fake" }),
+    });
+    const sessionId = ((await created.json()) as { session: { id: string } }).session.id;
+    const stream = (credential: string) =>
+      fetch(`${address}/api/v1/sessions/${sessionId}/events`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+
+    const first = await stream(firstDevice.credential);
+    expect(first.status).toBe(200);
+    const perDeviceLimited = await stream(firstDevice.credential);
+    expect(perDeviceLimited.status).toBe(429);
+    expect(perDeviceLimited.headers.get("retry-after")).toBe("1");
+    expect(await perDeviceLimited.json()).toMatchObject({
+      error: {
+        code: "sse_connection_limit",
+        message: expect.stringContaining("retry"),
+      },
+    });
+
+    const second = await stream(secondDevice.credential);
+    expect(second.status).toBe(200);
+    const globallyLimited = await stream(secondDevice.credential);
+    expect(globallyLimited.status).toBe(429);
+
+    await first.body?.cancel();
+    const replacement = await stream(firstDevice.credential);
+    expect(replacement.status).toBe(200);
+    await replacement.body?.cancel();
+    await second.body?.cancel();
+    await app.close();
+  });
+
   it("requires a paired device credential for private APIs and supports pair, list, and revoke", async () => {
     const pairingAuth = new PairingAuthService(new InMemoryAuthStore());
     const pairing = pairingAuth.issuePairingCode();
