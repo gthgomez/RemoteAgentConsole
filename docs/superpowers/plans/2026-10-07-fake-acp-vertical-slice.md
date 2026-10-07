@@ -96,11 +96,15 @@
 
 **Files:**
 - Create: `apps/host` Fastify app, in-memory session/event store, session manager, and API routes.
+- Extend: `packages/contracts` with strict API summary schemas for projects, runtimes, and sessions.
 - Test: REST session creation, prompt idempotency/conflicts, permission response, cancellation, SSE replay, and error mapping.
 
 **Interfaces:**
 - Consumes: contracts/domain from Task 2 and runtime interfaces from Task 4.
-- Produces: `/api/v1/health`, `/api/v1/sessions`, session detail, prompt/cancel/permission commands, and `/api/v1/sessions/:id/events` SSE.
+- Produces: `GET /api/v1/health`, `GET /api/v1/projects`, `GET /api/v1/runtimes`, `GET /api/v1/sessions`, `POST /api/v1/sessions`, `GET /api/v1/sessions/:sessionId`, `POST /api/v1/sessions/:sessionId/prompts`, `POST /api/v1/sessions/:sessionId/cancel`, `POST /api/v1/permissions/:permissionId/respond`, and `GET /api/v1/sessions/:sessionId/events` SSE.
+- Project summaries expose only `id` and `displayName`; local paths never reach the phone. Runtime summaries expose `id`, `displayName`, `installed`, optional `version`, and capability data. Session summaries use the shared session schema and a project display name.
+- Prompt request body uses `PromptRequest` (`requestId`, `text`); accepted response is `{ accepted: true, requestId, turnId }`. Cancel body is `{ requestId, turnId }`. Permission response body is `{ requestId, optionId }`; the permission ID is taken from the route. Reject a second active prompt with HTTP 409.
+- Events are persisted in the in-memory store before broadcast. Each per-session SSE ID is the event `sequence`; reconnect replays all later events before switching to live delivery.
 
 - [ ] Write API tests for lifecycle, retry behavior, permission handling, and event replay.
 - [ ] Run tests and confirm failures.
