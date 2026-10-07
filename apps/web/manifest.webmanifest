@@ -1,0 +1,16 @@
+{
+  "name": "Fieldwork Agent Console",
+  "short_name": "Fieldwork",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#101712",
+  "theme_color": "#101712",
+  "icons": [
+    {
+      "src": "/icons/fieldwork.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
