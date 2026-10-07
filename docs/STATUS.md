@@ -8,7 +8,7 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 
 `3e2dbcb` — `feat(host): serve production PWA assets`
 
-`pnpm verify`, `pnpm build`, and `pnpm --filter @remote-agent-console/web test:e2e` all passed after integration. The 35 host tests include production static serving and authentication; the static test also passed a default `apps/web/dist` process smoke test.
+`pnpm verify`, `pnpm build`, `pnpm --filter @remote-agent-console/web test:e2e` (10 tests), and `pnpm --filter @remote-agent-console/web test:pwa` passed after integration. The 35 host tests include production static serving and authentication; the static test also passed a default `apps/web/dist` process smoke test.
 
 ## What works today
 
