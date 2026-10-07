@@ -13,6 +13,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
+    "dev:test": "tsx watch src/test-server.ts",
     "start": "tsx src/server.ts"
   },
   "dependencies": {

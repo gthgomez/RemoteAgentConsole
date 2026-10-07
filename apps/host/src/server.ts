@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import { PairingAuthService } from "./auth/device-auth.js";
 import type { HostProject } from "./index.js";
 import { createHostApp } from "./index.js";
 import { canonicalizeConfiguredProjects } from "./projects/canonicalize.js";
@@ -44,12 +45,18 @@ const databasePath =
   join(process.env.LOCALAPPDATA ?? homedir(), ".remote-agent-console", "host.sqlite");
 mkdirSync(dirname(databasePath), { recursive: true });
 const store = new SQLiteHostStore({ filename: databasePath, projects });
+const pairingAuth = new PairingAuthService(store);
+const pairing = pairingAuth.issuePairingCode();
+console.info(
+  `Remote Agent Console pairing code: ${pairing.code} (expires ${new Date(pairing.expiresAt).toISOString()})`,
+);
 
 const app = createHostApp({
   machineId: process.env.RAC_MACHINE_ID ?? "local-machine",
   projects,
   supervisor: createRuntimeSupervisor({ projects }),
   store,
+  pairingAuth,
 });
 
 const portValue = Number(process.env.RAC_HOST_PORT ?? "4318");
