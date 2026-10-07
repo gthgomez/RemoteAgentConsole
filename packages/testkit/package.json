@@ -1,0 +1,15 @@
+{
+  "name": "@remote-agent-console/testkit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic ACP child agent for host integration tests",
+  "exports": "./src/fake-agent.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node src/fake-agent.js"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.7.0"
+  }
+}
