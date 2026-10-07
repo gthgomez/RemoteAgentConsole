@@ -275,7 +275,7 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
     fingerprint: string,
     reply: { code: (status: number) => typeof reply; send: (body: unknown) => unknown },
   ): boolean => {
-    const previous = store.idempotency.get(key);
+    const previous = store.getIdempotency(key);
     if (!previous) return false;
     if (previous.fingerprint !== fingerprint) {
       reply
@@ -649,6 +649,17 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
       const sessionId = request.params.sessionId;
       if (!store.sessions.has(sessionId))
         return reply.code(404).send(emptyError("not_found", "Session was not found"));
+      const oldestSequence = store.oldestEventSequence(sessionId);
+      if (oldestSequence !== null && afterSequence < oldestSequence - 1) {
+        return reply
+          .code(410)
+          .send(
+            emptyError(
+              "event_history_expired",
+              "This event cursor is older than the retained replay history; reload the session before reconnecting",
+            ),
+          );
+      }
 
       reply.hijack();
       reply.raw.writeHead(200, {
