@@ -15,6 +15,8 @@ The integrated code passed `pnpm verify`, `pnpm --filter @remote-agent-console/w
 - Strict TypeScript/pnpm monorepo with workspace verification, build, and development commands.
 - Stable ACP v1 stdio client and deterministic fake ACP child.
 - Host REST API with an explicit project allowlist, loopback-only binding, per-session event sequencing, SSE replay, and idempotent mutations.
+- SQLite-backed host state persists projects, sessions, turns, normalized events, permissions, idempotency responses, pairing codes, and device credential hashes. Persisted event sequences continue after restart; active turns become failed and idle sessions disconnected because runtime process resumption is not implemented yet.
+- `SQLiteHostStore` implements the device `AuthStore` boundary with atomic one-time pairing consumption, hash-only credential persistence, last-seen updates, and revocation. Pairing/auth routes remain unwired.
 - Permission choices are the runtime's exact ACP options; duplicate permission events, stale pending permissions, and cross-session permission ID collisions are covered.
 - Runtime process failure clears active turns and reports a sanitized visible failure.
 - Mobile-first installable PWA with session creation/activity, tool cards, permission controls, cancellation, and reconnect/reload behavior.
@@ -24,8 +26,8 @@ The integrated code passed `pnpm verify`, `pnpm --filter @remote-agent-console/w
 ## What does not work yet
 
 - Live Command Code/OpenCode prompt streaming, permission, cancellation, and session continuation are unverified.
-- No SQLite persistence or host-restart recovery; host session state is in memory.
-- No pairing/authentication, device revocation, rate limits, or Tailscale Serve setup.
+- No runtime session reattachment/resume after host restart; persisted sessions are visible but disconnected, and prompts are never replayed.
+- Pairing/auth route wiring, request rate limits, and Tailscale Serve setup are not implemented.
 - Production host does not yet serve the compiled PWA assets.
 - No real Windows laptop + Android phone acceptance run.
 
@@ -39,8 +41,8 @@ The integrated code passed `pnpm verify`, `pnpm --filter @remote-agent-console/w
 
 ## Next three tasks
 
-1. Add SQLite persistence, event replay across host restarts, and durable idempotency.
-2. Integrate device pairing/authentication and rate limits into host routes.
+1. Wire the persistent pairing/device AuthStore into host routes and add rate limits.
+2. Implement runtime session reattachment where supported and complete host-restart continuation behavior.
 3. Verify real Command Code/OpenCode prompts and permissions, then prepare Tailscale Serve and real-device acceptance.
 
 ## Last real-device test

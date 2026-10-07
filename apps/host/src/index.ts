@@ -20,19 +20,21 @@ import {
 } from "@remote-agent-console/contracts";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { RuntimeEvent, RuntimeSupervisorPort } from "./ports.js";
-import { type IdempotencyResult, InMemoryHostStore, type StoredSession } from "./store.js";
+import {
+  type HostProject,
+  type HostStore,
+  type IdempotencyResult,
+  InMemoryHostStore,
+  type StoredSession,
+} from "./store.js";
 
-export interface HostProject {
-  id: string;
-  displayName: string;
-  path: string;
-}
+export type { HostProject } from "./store.js";
 
 export interface HostAppOptions {
   machineId: string;
   projects: readonly HostProject[];
   supervisor: RuntimeSupervisorPort;
-  store?: InMemoryHostStore;
+  store?: HostStore;
   makeId?: (kind: "session" | "turn" | "event") => string;
 }
 
@@ -43,10 +45,12 @@ const activeStatuses = new Set(["running", "waiting_permission", "waiting_input"
 export function createHostApp(options: HostAppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const store = options.store ?? new InMemoryHostStore();
+  store.replaceProjects(options.projects);
   const makeId = options.makeId ?? ((kind: string) => `${kind}-${randomUUID()}`);
   const projects = new Map(options.projects.map((project) => [project.id, project]));
   app.addHook("onClose", async () => {
     if (options.supervisor.close) await options.supervisor.close();
+    store.close?.();
   });
   const createInFlight = new Map<
     string,
@@ -78,7 +82,7 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
   const append = (sessionId: string, input: RuntimeEvent): EventEnvelope | null => {
     const stored = store.sessions.get(sessionId);
     if (!stored) return null;
-    const sequence = (store.events.get(sessionId)?.at(-1)?.sequence ?? 0) + 1;
+    const sequence = store.nextSequence(sessionId);
     let event: EventEnvelope;
     try {
       event = eventEnvelopeSchema.parse({
@@ -162,8 +166,28 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
   };
   const saveIdempotency = (key: string, fingerprint: string, statusCode: number, body: unknown) => {
     const result: IdempotencyResult = { fingerprint, statusCode, body };
-    store.idempotency.set(key, result);
+    store.saveIdempotency(key, result);
   };
+
+  // Runtime child processes are not restored by this host. Preserve history and mark any
+  // in-flight work interrupted so the client cannot mistake a stale turn for live execution.
+  for (const [sessionId, stored] of store.sessions) {
+    if (stored.runtimeSession) continue;
+    const activeTurnId = stored.summary.activeTurnId;
+    if (activeTurnId) {
+      append(sessionId, {
+        eventType: "turn.failed",
+        payload: { turnId: activeTurnId, message: "Host restarted during the active turn" },
+      });
+    } else if (stored.summary.status === "creating") {
+      append(sessionId, { eventType: "session.status_changed", payload: { status: "failed" } });
+    } else if (stored.summary.status === "idle") {
+      append(sessionId, {
+        eventType: "session.status_changed",
+        payload: { status: "disconnected" },
+      });
+    }
+  }
 
   app.get("/api/v1/health", async () => healthResponseSchema.parse({ status: "ok" }));
 
@@ -266,7 +290,7 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
           body: emptyError("runtime_error", "Runtime could not create a session"),
         };
       }
-      store.idempotency.set(key, result);
+      store.saveIdempotency(key, result);
       return result;
     });
     createInFlight.set(key, { fingerprint, promise });
@@ -312,6 +336,13 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
       stored.summary.activeTurnId = turnId;
       stored.summary.status = "running";
       stored.summary.updatedAt = new Date().toISOString();
+      store.createTurn({
+        id: turnId,
+        sessionId: request.params.sessionId,
+        prompt: parsed.data.text,
+        status: "running",
+        createdAt: stored.summary.updatedAt,
+      });
       append(request.params.sessionId, { eventType: "turn.started", payload: { turnId } });
       append(request.params.sessionId, {
         eventType: "session.status_changed",
@@ -370,7 +401,7 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
       try {
         await stored.runtimeSession.cancel(parsed.data.turnId);
       } catch {
-        store.idempotency.delete(key);
+        store.deleteIdempotency(key);
         stored.summary.status = "running";
         stored.summary.updatedAt = new Date().toISOString();
         append(request.params.sessionId, {
@@ -428,7 +459,7 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
         await stored.runtimeSession.respondPermission(permissionId, parsed.data.optionId);
       } catch {
         permission.resolved = false;
-        store.idempotency.delete(key);
+        store.deleteIdempotency(key);
         return reply
           .code(502)
           .send(emptyError("runtime_error", "Runtime rejected the permission response"));
@@ -483,4 +514,4 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
 export { createFakeRuntimeSupervisor } from "./fake-runtime.js";
 export type { RuntimeEvent, RuntimeSessionPort, RuntimeSupervisorPort } from "./ports.js";
 export { createRuntimeSupervisor } from "./runtime-supervisor.js";
-export { InMemoryHostStore } from "./store.js";
+export { InMemoryHostStore, SQLiteHostStore } from "./store.js";

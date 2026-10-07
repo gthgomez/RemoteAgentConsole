@@ -1,8 +1,11 @@
-import { isAbsolute } from "node:path";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import type { HostProject } from "./index.js";
 import { createHostApp } from "./index.js";
 import { canonicalizeConfiguredProjects } from "./projects/canonicalize.js";
 import { createRuntimeSupervisor } from "./runtime-supervisor.js";
+import { SQLiteHostStore } from "./store.js";
 
 function readProjects(value: string | undefined): HostProject[] {
   if (!value) return [];
@@ -36,11 +39,17 @@ function readProjects(value: string | undefined): HostProject[] {
 }
 
 const projects = await canonicalizeConfiguredProjects(readProjects(process.env.RAC_PROJECTS_JSON));
+const databasePath =
+  process.env.RAC_HOST_DATABASE_PATH ??
+  join(process.env.LOCALAPPDATA ?? homedir(), ".remote-agent-console", "host.sqlite");
+mkdirSync(dirname(databasePath), { recursive: true });
+const store = new SQLiteHostStore({ filename: databasePath, projects });
 
 const app = createHostApp({
   machineId: process.env.RAC_MACHINE_ID ?? "local-machine",
   projects,
   supervisor: createRuntimeSupervisor({ projects }),
+  store,
 });
 
 const portValue = Number(process.env.RAC_HOST_PORT ?? "4318");

@@ -8,7 +8,9 @@ The development entry point listens on `127.0.0.1` only. Set `RAC_PROJECTS_JSON`
 [{"id":"demo","displayName":"Demo project","path":"/home/me/project"}]
 ```
 
-The configured paths must be absolute. API clients select these records by ID; the host never accepts a path from an API request or returns a path in a response. ACP processes launch with `shell: false`. The in-memory session/event/idempotency store is intentionally ephemeral for this vertical slice.
+The configured paths must be absolute. API clients select these records by ID; the host never accepts a path from an API request or returns a path in a response. ACP processes launch with `shell: false`.
+
+The host stores projects, session summaries, turns, normalized events, idempotency results, pending permissions, pairing records, and device records in SQLite. The default database path is `%LOCALAPPDATA%\\.remote-agent-console\\host.sqlite` on Windows and `~/.remote-agent-console/host.sqlite` elsewhere. Set `RAC_HOST_DATABASE_PATH` to choose another local file. Runtime child processes are not restored after a host restart: active turns are marked failed, idle sessions become disconnected, and prompts are never replayed automatically. Device credentials are stored only as SHA-256 hashes. The API pairing/auth routes are not wired yet.
 
 The host probes `command-code --version` and `opencode --version` without a
 shell. Override executable selection with `RAC_COMMAND_CODE_EXECUTABLE` or
