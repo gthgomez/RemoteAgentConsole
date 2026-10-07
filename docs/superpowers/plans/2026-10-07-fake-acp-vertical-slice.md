@@ -103,8 +103,9 @@
 - Consumes: contracts/domain from Task 2 and runtime interfaces from Task 4.
 - Produces: `GET /api/v1/health`, `GET /api/v1/projects`, `GET /api/v1/runtimes`, `GET /api/v1/sessions`, `POST /api/v1/sessions`, `GET /api/v1/sessions/:sessionId`, `POST /api/v1/sessions/:sessionId/prompts`, `POST /api/v1/sessions/:sessionId/cancel`, `POST /api/v1/permissions/:permissionId/respond`, and `GET /api/v1/sessions/:sessionId/events` SSE.
 - Project summaries expose only `id` and `displayName`; local paths never reach the phone. Runtime summaries expose `id`, `displayName`, `installed`, optional `version`, and capability data. Session summaries use the shared session schema and a project display name.
+- Collection responses are `{ projects: ProjectSummary[] }`, `{ runtimes: RuntimeSummary[] }`, and `{ sessions: Session[] }`. Session create and detail responses are `{ session: Session }`; keep `Session` strict and let clients resolve display names from the catalogs.
 - Prompt request body uses `PromptRequest` (`requestId`, `text`); accepted response is `{ accepted: true, requestId, turnId }`. Cancel body is `{ requestId, turnId }`. Permission response body is `{ requestId, optionId }`; the permission ID is taken from the route. Reject a second active prompt with HTTP 409.
-- Events are persisted in the in-memory store before broadcast. Each per-session SSE ID is the event `sequence`; reconnect replays all later events before switching to live delivery.
+- Events are persisted in the in-memory store before broadcast. Each per-session SSE ID is the event `sequence`; reconnect replays all later events before switching to live delivery. Use the default SSE `message` event with the normalized `EventEnvelope` as JSON `data`; its `eventType` field identifies the domain event.
 
 - [ ] Write API tests for lifecycle, retry behavior, permission handling, and event replay.
 - [ ] Run tests and confirm failures.
