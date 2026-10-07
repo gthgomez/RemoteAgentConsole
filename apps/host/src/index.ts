@@ -63,6 +63,18 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
     return reply.code(400).send(emptyError("bad_request", "Request could not be parsed"));
   });
 
+  const expirePendingPermissions = (sessionId: string, turnId: string) => {
+    for (const permission of store.permissions.values()) {
+      if (
+        permission.sessionId === sessionId &&
+        permission.turnId === turnId &&
+        !permission.resolved
+      ) {
+        permission.resolved = true;
+      }
+    }
+  };
+
   const append = (sessionId: string, input: RuntimeEvent): EventEnvelope | null => {
     const stored = store.sessions.get(sessionId);
     if (!stored) return null;
@@ -85,6 +97,7 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
       });
     }
     stored.summary.updatedAt = new Date().toISOString();
+    let interruptedTurnId: string | null = null;
     if (event.eventType === "permission.requested") {
       store.permissions.set(event.payload.permissionId, {
         sessionId,
@@ -98,15 +111,32 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
       if (permission) permission.resolved = true;
       stored.summary.status = "running";
     } else if (event.eventType === "turn.completed") {
-      stored.summary.activeTurnId = null;
-      stored.summary.status = "idle";
+      expirePendingPermissions(sessionId, event.payload.turnId);
+      if (stored.summary.activeTurnId === event.payload.turnId) {
+        stored.summary.activeTurnId = null;
+        stored.summary.status = "idle";
+      }
     } else if (event.eventType === "turn.failed") {
+      expirePendingPermissions(sessionId, event.payload.turnId);
+      if (stored.summary.activeTurnId === event.payload.turnId) {
+        stored.summary.activeTurnId = null;
+        stored.summary.status = "failed";
+      }
+    } else if (event.eventType === "session.error") {
+      interruptedTurnId = stored.summary.activeTurnId;
+      if (interruptedTurnId) expirePendingPermissions(sessionId, interruptedTurnId);
       stored.summary.activeTurnId = null;
       stored.summary.status = "failed";
     } else if (event.eventType === "session.status_changed") {
       stored.summary.status = event.payload.status;
     }
     store.appendEvent(sessionId, event);
+    if (event.eventType === "session.error" && interruptedTurnId) {
+      append(sessionId, {
+        eventType: "turn.failed",
+        payload: { turnId: interruptedTurnId, message: event.payload.message },
+      });
+    }
     return event;
   };
 
