@@ -1,7 +1,8 @@
 import { isAbsolute } from "node:path";
-import { createFakeRuntimeSupervisor } from "./fake-runtime.js";
 import type { HostProject } from "./index.js";
 import { createHostApp } from "./index.js";
+import { canonicalizeConfiguredProjects } from "./projects/canonicalize.js";
+import { createRuntimeSupervisor } from "./runtime-supervisor.js";
 
 function readProjects(value: string | undefined): HostProject[] {
   if (!value) return [];
@@ -34,12 +35,12 @@ function readProjects(value: string | undefined): HostProject[] {
   });
 }
 
-const projects = readProjects(process.env.RAC_PROJECTS_JSON);
+const projects = await canonicalizeConfiguredProjects(readProjects(process.env.RAC_PROJECTS_JSON));
 
 const app = createHostApp({
   machineId: process.env.RAC_MACHINE_ID ?? "local-machine",
   projects,
-  supervisor: createFakeRuntimeSupervisor({ projects }),
+  supervisor: createRuntimeSupervisor({ projects }),
 });
 
 const portValue = Number(process.env.RAC_HOST_PORT ?? "4318");

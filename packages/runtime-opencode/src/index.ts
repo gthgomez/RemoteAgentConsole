@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { AcpRuntimeOptions } from "@remote-agent-console/acp-client";
 import { createAcpRuntimeAdapter } from "@remote-agent-console/acp-client";
 import type { RuntimeCapabilities, RuntimeSummary } from "@remote-agent-console/contracts";
 import type { RuntimeAdapter } from "@remote-agent-console/runtime-core";
@@ -29,8 +30,11 @@ export interface OpenCodeDiscoveryOptions {
 }
 
 /** Wraps OpenCode's stable ACP v1 stdio entry point in the shared ACP adapter. */
-export function createOpenCodeRuntimeAdapter(options: OpenCodeRuntimeOptions): RuntimeAdapter {
-  return createAcpRuntimeAdapter({
+export function createOpenCodeRuntimeAdapter(
+  options: OpenCodeRuntimeOptions,
+  adapterFactory: (options: AcpRuntimeOptions) => RuntimeAdapter = createAcpRuntimeAdapter,
+): RuntimeAdapter {
+  return adapterFactory({
     id: "opencode",
     displayName: "OpenCode",
     command: options.command ?? "opencode",

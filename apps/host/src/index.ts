@@ -176,7 +176,9 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
 
   app.get("/api/v1/runtimes", async (_request, reply) => {
     const result = runtimesResponseSchema.parse({
-      runtimes: options.supervisor.runtimes().map((runtime) => runtimeSummarySchema.parse(runtime)),
+      runtimes: (await options.supervisor.runtimes()).map((runtime) =>
+        runtimeSummarySchema.parse(runtime),
+      ),
     });
     return reply.send(result);
   });
@@ -208,7 +210,9 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
     const project = projects.get(parsed.data.projectId);
     if (!project)
       return reply.code(404).send(emptyError("project_not_found", "Project is not allowlisted"));
-    const runtime = options.supervisor.runtimes().find((item) => item.id === parsed.data.runtimeId);
+    const runtime = (await options.supervisor.runtimes()).find(
+      (item) => item.id === parsed.data.runtimeId,
+    );
     if (!runtime)
       return reply.code(404).send(emptyError("runtime_not_found", "Runtime is not available"));
     if (!runtime.installed)
@@ -478,4 +482,5 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
 
 export { createFakeRuntimeSupervisor } from "./fake-runtime.js";
 export type { RuntimeEvent, RuntimeSessionPort, RuntimeSupervisorPort } from "./ports.js";
+export { createRuntimeSupervisor } from "./runtime-supervisor.js";
 export { InMemoryHostStore } from "./store.js";

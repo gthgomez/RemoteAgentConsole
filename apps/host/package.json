@@ -18,7 +18,9 @@
   "dependencies": {
     "@remote-agent-console/acp-client": "workspace:*",
     "@remote-agent-console/contracts": "workspace:*",
+    "@remote-agent-console/runtime-command-code": "workspace:*",
     "@remote-agent-console/runtime-core": "workspace:*",
+    "@remote-agent-console/runtime-opencode": "workspace:*",
     "@remote-agent-console/testkit": "workspace:*",
     "fastify": "^5.6.1"
   },
