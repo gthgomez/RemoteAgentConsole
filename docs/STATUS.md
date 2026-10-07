@@ -16,10 +16,12 @@ The integrated code passed `pnpm verify`, `pnpm --filter @remote-agent-console/w
 - Stable ACP v1 stdio client and deterministic fake ACP child.
 - Host REST API with an explicit project allowlist, loopback-only binding, per-session event sequencing, SSE replay, and idempotent mutations.
 - SQLite-backed host state persists projects, sessions, turns, normalized events, permissions, idempotency responses, pairing codes, and device credential hashes. Persisted event sequences continue after restart; active turns become failed and idle sessions disconnected because runtime process resumption is not implemented yet.
-- `SQLiteHostStore` implements the device `AuthStore` boundary with atomic one-time pairing consumption, hash-only credential persistence, last-seen updates, and revocation. Pairing/auth routes remain unwired.
+- Production host routes use `SQLiteHostStore` and device authentication, with atomic one-time pairing consumption, hash-only credential persistence, last-seen updates, and revocation.
 - Permission choices are the runtime's exact ACP options; duplicate permission events, stale pending permissions, and cross-session permission ID collisions are covered.
 - Runtime process failure clears active turns and reports a sanitized visible failure.
 - Mobile-first installable PWA with session creation/activity, tool cards, permission controls, cancellation, and reconnect/reload behavior.
+- Production host serves the built PWA app shell and static assets from `apps/web/dist` alongside the API, with SPA route fallback and a single loopback service.
+- Normal `pnpm dev` uses SQLite-backed pairing and API authentication and prints a one-time pairing code. The unauthenticated `dev:test` entrypoint is reserved for Playwright E2E.
 - Live-host Playwright E2E covers streaming, tool activity, permission response/cancel, completion, reload, another prompt, and runtime crash.
 - The host runtime supervisor exposes the fake runtime plus Command Code and OpenCode. Both local binaries initialized ACP and created a session through the host without sending a model prompt. Observed results are in `docs/compatibility/`.
 
@@ -27,8 +29,8 @@ The integrated code passed `pnpm verify`, `pnpm --filter @remote-agent-console/w
 
 - Live Command Code/OpenCode prompt streaming, permission, cancellation, and session continuation are unverified.
 - No runtime session reattachment/resume after host restart; persisted sessions are visible but disconnected, and prompts are never replayed.
-- Pairing/auth route wiring, request rate limits, and Tailscale Serve setup are not implemented.
-- Production host does not yet serve the compiled PWA assets.
+- Production PWA serving requires `pnpm build` first; development still uses Vite and its API proxy.
+- No real Windows laptop + Android phone acceptance run.
 - No real Windows laptop + Android phone acceptance run.
 
 ## Active branch
@@ -41,9 +43,9 @@ The integrated code passed `pnpm verify`, `pnpm --filter @remote-agent-console/w
 
 ## Next three tasks
 
-1. Wire the persistent pairing/device AuthStore into host routes and add rate limits.
+1. Verify real Command Code/OpenCode prompts, permissions, cancellation, and continuation.
 2. Implement runtime session reattachment where supported and complete host-restart continuation behavior.
-3. Verify real Command Code/OpenCode prompts and permissions, then prepare Tailscale Serve and real-device acceptance.
+3. Run production `pnpm build` + host startup through Tailscale on Windows and Android.
 
 ## Last real-device test
 

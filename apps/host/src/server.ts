@@ -1,6 +1,7 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PairingAuthService } from "./auth/device-auth.js";
 import type { HostProject } from "./index.js";
 import { createHostApp } from "./index.js";
@@ -43,6 +44,14 @@ const projects = await canonicalizeConfiguredProjects(readProjects(process.env.R
 const databasePath =
   process.env.RAC_HOST_DATABASE_PATH ??
   join(process.env.LOCALAPPDATA ?? homedir(), ".remote-agent-console", "host.sqlite");
+const configuredWebRoot = process.env.RAC_WEB_DIST_PATH;
+const webRoot = configuredWebRoot ?? fileURLToPath(new URL("../../web/dist/", import.meta.url));
+if (configuredWebRoot && !existsSync(configuredWebRoot)) {
+  throw new Error("RAC_WEB_DIST_PATH must point to an existing web build directory");
+}
+if (!existsSync(webRoot)) {
+  console.warn("PWA build not found; run pnpm build to serve the web app from this host");
+}
 mkdirSync(dirname(databasePath), { recursive: true });
 const store = new SQLiteHostStore({ filename: databasePath, projects });
 const pairingAuth = new PairingAuthService(store);
@@ -57,6 +66,7 @@ const app = createHostApp({
   supervisor: createRuntimeSupervisor({ projects }),
   store,
   pairingAuth,
+  ...(existsSync(webRoot) ? { webRoot } : {}),
 });
 
 const portValue = Number(process.env.RAC_HOST_PORT ?? "4318");

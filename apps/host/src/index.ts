@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { extname } from "node:path";
+import fastifyStatic from "@fastify/static";
 import type { EventEnvelope, SessionSummary } from "@remote-agent-console/contracts";
 import {
   apiErrorSchema,
@@ -51,6 +53,7 @@ export interface HostAppOptions {
   pairingRateLimit?: { limit: number; windowMs: number };
   authFailureRateLimit?: { limit: number; windowMs: number };
   mutationRateLimit?: { limit: number; windowMs: number };
+  webRoot?: string;
   makeId?: (kind: "session" | "turn" | "event") => string;
 }
 
@@ -61,6 +64,26 @@ const activeStatuses = new Set(["running", "waiting_permission", "waiting_input"
 export function createHostApp(options: HostAppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   app.decorateRequest("authenticatedDeviceId", null);
+  if (options.webRoot) {
+    app.register(fastifyStatic, {
+      root: options.webRoot,
+      prefix: "/",
+      index: false,
+      wildcard: false,
+      dotfiles: "deny",
+    });
+    app.setNotFoundHandler((request, reply) => {
+      const pathname = request.url.split("?", 1)[0] ?? "/";
+      const isReadRequest = request.method === "GET" || request.method === "HEAD";
+      const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
+      const isAppRoute = pathname === "/" || extname(pathname) === "";
+      const acceptsHtml = request.headers.accept?.includes("text/html") ?? false;
+      if (isReadRequest && !isApiPath && isAppRoute && (pathname === "/" || acceptsHtml)) {
+        return reply.type("text/html; charset=utf-8").sendFile("index.html");
+      }
+      return reply.code(404).send({ statusCode: 404, error: "Not Found", message: "Not Found" });
+    });
+  }
   const store = options.store ?? new InMemoryHostStore();
   const rateLimiter = options.rateLimiter ?? new InMemoryRateLimiter();
   const pairingRateLimit = options.pairingRateLimit ?? { limit: 5, windowMs: 60_000 };
@@ -100,6 +123,14 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
   app.addHook("onRequest", async (request, reply) => {
     if (!options.pairingAuth) return;
     const path = request.url.split("?", 1)[0];
+    if (
+      options.webRoot &&
+      (request.method === "GET" || request.method === "HEAD") &&
+      path &&
+      !path.startsWith("/api/")
+    ) {
+      return;
+    }
     if (request.method === "GET" && path === "/api/v1/health") return;
     if (request.method === "POST" && path === "/api/v1/devices/pair") {
       if (
