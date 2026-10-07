@@ -5,12 +5,12 @@ This roadmap follows the supplied Remote Agent Console campaign. “In progress�
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | 0 | Monorepo foundation and verification gate | Complete |
-| 1 | Deterministic fake ACP vertical slice | In progress — live-host browser E2E pending |
-| 2 | Command Code ACP integration and observed compatibility | In progress — wrapper and initialize/session smoke done; prompt/permission compatibility pending |
-| 3 | OpenCode ACP integration and observed compatibility | In progress — wrapper and initialize/session smoke done; prompt/permission compatibility pending |
-| 4 | SQLite persistence, replay, idempotency, and host restart behavior | Not started |
-| 5 | Pairing, device credentials, rate limits, and Tailscale Serve setup | Not started |
-| 6 | Mobile PWA UX and real-device Windows/Android workflow | Not started |
+| 1 | Deterministic fake ACP vertical slice | Complete — live-host browser E2E covers streaming, permissions, cancellation, reload, and crash handling |
+| 2 | Command Code ACP integration and observed compatibility | In progress — host selection and initialize/session smoke done; prompt/permission compatibility pending |
+| 3 | OpenCode ACP integration and observed compatibility | In progress — host selection and initialize/session smoke done; prompt/permission compatibility pending |
+| 4 | SQLite persistence, replay, idempotency, and host restart behavior | In progress |
+| 5 | Pairing, device credentials, rate limits, and Tailscale Serve setup | In progress — credential/pairing primitives underway; host wiring and Serve setup remain |
+| 6 | Mobile PWA UX and real-device Windows/Android workflow | In progress — core mobile flow exists; install-shell refinement underway; real-device workflow pending |
 | MVP gate | Twenty-step real-device acceptance evidence | Not started |
 | Post-MVP | Reliability, polish, attachments, notifications, and multi-machine support | Deferred |
 
