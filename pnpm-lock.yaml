@@ -181,9 +181,15 @@ importers:
       '@remote-agent-console/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@remote-agent-console/runtime-command-code':
+        specifier: workspace:*
+        version: link:../../packages/runtime-command-code
       '@remote-agent-console/runtime-core':
         specifier: workspace:*
         version: link:../../packages/runtime-core
+      '@remote-agent-console/runtime-opencode':
+        specifier: workspace:*
+        version: link:../../packages/runtime-opencode
       '@remote-agent-console/testkit':
         specifier: workspace:*
         version: link:../../packages/testkit
