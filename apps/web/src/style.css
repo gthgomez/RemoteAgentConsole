@@ -687,3 +687,19 @@ select:focus-visible {
     border-radius: 23px 23px 0 0;
   }
 }
+.permission-cancel {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #c1cec0;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.permission-cancel:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

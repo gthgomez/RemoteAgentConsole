@@ -202,7 +202,7 @@ test("creates a session, streams activity, responds to permission, and restores 
   const allowOnce = page.getByRole("button", { name: "Allow once" });
   await expect(allowOnce).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(page.getByRole("button", { name: "Deny" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Cancel this turn" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(allowOnce).toBeFocused();
   await allowOnce.click();
@@ -254,4 +254,171 @@ test("shows reconnect state when the event stream disconnects", async ({ page })
   await page.route("**/api/v1/sessions/session-1/events", (route) => route.abort());
   await page.goto("/sessions/session-1");
   await expect(page.getByText("Reconnecting to session…")).toBeVisible();
+});
+
+test("cancels a turn from the permission sheet and clears the pending request", async ({
+  page,
+}) => {
+  let cancelReceived = false;
+  const now = new Date().toISOString();
+  const events: EventEnvelope[] = [
+    {
+      eventId: "cancel-start",
+      sequence: 1,
+      machineId: "machine",
+      sessionId: "session-cancel",
+      timestamp: now,
+      eventType: "turn.started",
+      payload: { turnId: "turn-cancel" },
+    },
+    {
+      eventId: "cancel-permission",
+      sequence: 2,
+      machineId: "machine",
+      sessionId: "session-cancel",
+      timestamp: now,
+      eventType: "permission.requested",
+      payload: {
+        turnId: "turn-cancel",
+        permissionId: "permission-cancel",
+        title: "Allow this action?",
+        options: [{ optionId: "allow-once", name: "Allow once" }],
+      },
+    },
+  ];
+
+  await page.route("**/api/v1/projects", (route) => route.fulfill({ json: { projects: [] } }));
+  await page.route("**/api/v1/runtimes", (route) => route.fulfill({ json: { runtimes: [] } }));
+  await page.route("**/api/v1/sessions", (route) =>
+    route.fulfill({
+      json: {
+        sessions: [
+          {
+            id: "session-cancel",
+            machineId: "machine",
+            projectId: "p",
+            runtimeId: "r",
+            status: "waiting_permission",
+            createdAt: now,
+            updatedAt: now,
+            activeTurnId: "turn-cancel",
+            projectDisplayName: "Project",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/v1/sessions/session-cancel", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          id: "session-cancel",
+          machineId: "machine",
+          projectId: "p",
+          runtimeId: "r",
+          status: "waiting_permission",
+          createdAt: now,
+          updatedAt: now,
+          activeTurnId: "turn-cancel",
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/sessions/session-cancel/cancel", async (route) => {
+    cancelReceived = true;
+    await route.fulfill({ json: { accepted: true, requestId: "cancel-request" } });
+  });
+  await page.route("**/api/v1/sessions/session-cancel/events", async (route) => {
+    const delivery = cancelReceived
+      ? [
+          ...events,
+          {
+            eventId: "cancelled",
+            sequence: 3,
+            machineId: "machine",
+            sessionId: "session-cancel",
+            timestamp: now,
+            eventType: "turn.failed",
+            payload: { turnId: "turn-cancel", message: "Cancelled by user" },
+          } satisfies EventEnvelope,
+        ]
+      : events;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: delivery
+        .map((event) => `id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+        .join(""),
+    });
+  });
+
+  await page.goto("/sessions/session-cancel");
+  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel this turn" }).click();
+  await expect.poll(() => cancelReceived).toBe(true);
+  await expect(page.getByText("Cancelled by user")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Stop" })).toBeDisabled();
+});
+
+test("shows session errors and clears the active turn", async ({ page }) => {
+  const now = new Date().toISOString();
+  const event: EventEnvelope = {
+    eventId: "session-error-1",
+    sequence: 2,
+    machineId: "machine",
+    sessionId: "session-error",
+    timestamp: now,
+    eventType: "session.error",
+    payload: { message: "Agent process exited unexpectedly" },
+  };
+  await page.route("**/api/v1/projects", (route) => route.fulfill({ json: { projects: [] } }));
+  await page.route("**/api/v1/runtimes", (route) => route.fulfill({ json: { runtimes: [] } }));
+  await page.route("**/api/v1/sessions", (route) =>
+    route.fulfill({
+      json: {
+        sessions: [
+          {
+            id: "session-error",
+            machineId: "machine",
+            projectId: "p",
+            runtimeId: "r",
+            status: "running",
+            createdAt: now,
+            updatedAt: now,
+            activeTurnId: "turn-error",
+            projectDisplayName: "Project",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/v1/sessions/session-error", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          id: "session-error",
+          machineId: "machine",
+          projectId: "p",
+          runtimeId: "r",
+          status: "running",
+          createdAt: now,
+          updatedAt: now,
+          activeTurnId: "turn-error",
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/sessions/session-error/events", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: `id: 2\ndata: ${JSON.stringify(event)}\n\n`,
+    }),
+  );
+
+  await page.goto("/sessions/session-error");
+  await expect(page.getByText("Agent process exited unexpectedly")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeDisabled();
+  await expect(page.getByText("failed", { exact: true })).toBeVisible();
 });
