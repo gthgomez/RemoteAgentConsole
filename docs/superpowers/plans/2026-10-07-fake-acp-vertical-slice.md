@@ -30,78 +30,105 @@
 
 ---
 
-### Task 1: Repository foundation and shared contracts
+### Task 1: Repository foundation
 
 **Files:**
-- Create: root pnpm workspace/package configuration, TypeScript/Biome configuration, CI workflow, and package manifests.
-- Create: `packages/contracts` shared Zod request/response/event schemas.
+- Create: root `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, Biome config, GitHub Actions workflow, and `.gitignore` updates.
+- Create: root README and empty package/app manifests needed for a strict TypeScript workspace.
+
+**Interfaces:**
+- Produces root commands `pnpm verify`, `pnpm dev`, and `pnpm build`; packages use ESM and strict TypeScript.
+
+- [ ] Add configuration validation/documentation checks for the workspace scripts and supported Node range.
+- [ ] Run the checks to confirm the fresh workspace is incomplete.
+- [ ] Implement the pnpm workspace, shared tooling config, and Windows/Ubuntu CI.
+- [ ] Run `pnpm install`, `pnpm verify`, and `pnpm build`.
+
+### Task 2: Shared contracts and domain model
+
+**Files:**
+- Create: `packages/contracts` shared Zod request, response, and event schemas.
 - Create: `packages/domain` runtime-neutral session, turn, permission, and event types/state transitions.
-- Create: `docs/ROADMAP.md`, architecture README, and root development documentation.
-- Test: contract validation and session state transition unit tests.
+- Test: request/event validation, legal session transitions, one active turn, and exact permission option validation.
 
 **Interfaces:**
-- Produces: packages `@remote-agent-console/contracts` and `@remote-agent-console/domain`; root scripts `pnpm verify`, `pnpm dev`, and `pnpm build`.
+- Produces workspace packages `@remote-agent-console/contracts` and `@remote-agent-console/domain`.
+- Event envelope fields are `eventId`, per-session monotonic `sequence`, `machineId`, `sessionId`, ISO timestamp, `eventType`, and typed payload.
+- Session status values are `creating`, `idle`, `running`, `waiting_permission`, `waiting_input`, `stopping`, `disconnected`, `failed`, `completed`, and `closed`.
 
-- [ ] Write failing tests for request validation, event envelope validation, legal session transitions, one active turn, and unknown permission-option rejection.
+- [ ] Write failing tests for event/request schemas, state transitions, one-active-turn conflict, and unknown permission-option rejection.
 - [ ] Run those tests and confirm the intended failures.
-- [ ] Implement workspace/configuration, shared schemas, and domain transitions.
-- [ ] Run `pnpm verify` and `pnpm build`.
+- [ ] Implement schemas and domain transitions.
+- [ ] Run package tests and `pnpm verify`.
 
-### Task 2: ACP client and deterministic fake ACP child
+### Task 3: Deterministic fake ACP child
 
 **Files:**
-- Create: `packages/acp-client` process transport and ACP-to-domain event mapping.
-- Create: `packages/runtime-core` adapter/connection interfaces and capability model.
-- Create: `packages/testkit` deterministic fake ACP child executable and scenario configuration.
-- Test: fake ACP initialize, new session, prompt streaming, tool update, permission response, cancellation, completion, malformed frame, and process exit.
+- Create: `packages/testkit` ACP agent process using `@agentclientprotocol/sdk` and a deterministic fake scenario.
+- Test: initialize, new session, prompt text stream, tool activity, permission request/response, cancel, completion, malformed frame, and child exit.
 
 **Interfaces:**
-- Consumes: shared domain and contracts from Task 1.
-- Produces: runtime-neutral `RuntimeAdapter`, `RuntimeConnection`, `RuntimeSession` interfaces; ACP client emits normalized `RuntimeEvent` values and keeps raw ACP values internal.
+- Produces an executable child entry point suitable for host ACP stdio integration tests.
+- The fake agent uses ACP session/update/permission methods and has no shell or filesystem tool.
 
-- [ ] Write contract tests against a fake ACP child process.
-- [ ] Run the contract tests and confirm they fail before implementation.
-- [ ] Implement ACP stdio transport and normalized event mapping.
-- [ ] Run ACP contract tests and `pnpm verify`.
+- [ ] Write subprocess contract tests for the fake agent's ACP behavior.
+- [ ] Run them and confirm failure before implementation.
+- [ ] Implement the fake ACP child and deterministic scenario.
+- [ ] Run contract tests and `pnpm verify`.
 
-### Task 3: Host session API and replayable event stream
+### Task 4: ACP client and runtime-neutral adapter
 
 **Files:**
-- Create: `apps/host` Fastify app, in-memory session/event store for this fake slice, session manager, and API routes.
-- Create: host-side fake runtime registration using the ACP client from Task 2.
+- Create: `packages/acp-client` ACP v1 process transport and ACP-to-domain event mapping.
+- Create: `packages/runtime-core` adapter/connection/session interfaces and capability model.
+- Test: stdio framing, event normalization, permission response, cancellation, and process failure.
+
+**Interfaces:**
+- Consumes: domain/contracts from Task 2 and fake process from Task 3.
+- Produces: runtime-neutral `RuntimeAdapter`, `RuntimeConnection`, and `RuntimeSession`; raw ACP values remain inside this package.
+
+- [ ] Write adapter contract tests against the fake ACP child.
+- [ ] Run the tests and confirm failure before implementation.
+- [ ] Implement ACP transport and normalized event mapping.
+- [ ] Run package tests and `pnpm verify`.
+
+### Task 5: Host session API and event stream
+
+**Files:**
+- Create: `apps/host` Fastify app, in-memory session/event store, session manager, and API routes.
 - Test: REST session creation, prompt idempotency/conflicts, permission response, cancellation, SSE replay, and error mapping.
 
 **Interfaces:**
-- Consumes: contracts/domain from Task 1 and runtime interfaces from Task 2.
+- Consumes: contracts/domain from Task 2 and runtime interfaces from Task 4.
 - Produces: `/api/v1/health`, `/api/v1/sessions`, session detail, prompt/cancel/permission commands, and `/api/v1/sessions/:id/events` SSE.
 
-- [ ] Write host API tests for session lifecycle, retries, permissions, and event replay.
+- [ ] Write API tests for lifecycle, retry behavior, permission handling, and event replay.
 - [ ] Run tests and confirm failures.
-- [ ] Implement session manager, adapter orchestration, REST, and SSE.
+- [ ] Implement host session orchestration, REST, and SSE.
 - [ ] Run host tests and `pnpm verify`.
 
-### Task 4: Mobile-first web vertical slice
+### Task 6: Mobile-first web vertical slice
 
 **Files:**
-- Create: `apps/web` React/Vite PWA shell and typed `packages/client-sdk` API/SSE client.
+- Create: `apps/web` React/Vite PWA shell and typed `packages/client-sdk` host API/SSE client.
 - Create: dashboard/session creation, session activity view, tool activity card, permission sheet, prompt composer, and reconnect state.
-- Test: Playwright fake-runtime E2E for prompt streaming, tool activity, permission response, completion, refresh, and reconnect.
+- Test: Playwright E2E for prompt streaming, tool activity, permission response, completion, refresh, and reconnect.
 
 **Interfaces:**
-- Consumes: contracts from Task 1 and host API from Task 3.
-- Produces: PWA UI that only calls the host API and renders capability/event data without runtime-specific branching.
+- Consumes contracts from Task 2 and host API from Task 5.
+- UI only calls the host API and renders capability/event data without runtime-specific branching.
 
 - [ ] Write browser E2E coverage for the complete fake ACP workflow.
-- [ ] Run it against the host and confirm the expected workflow fails before UI implementation.
-- [ ] Implement typed client and mobile-first views with ~44 CSS pixel touch targets.
+- [ ] Run it against the host and confirm the workflow fails before implementation.
+- [ ] Implement the typed client and mobile-first views with ~44 CSS pixel touch targets.
 - [ ] Run E2E, `pnpm verify`, and `pnpm build`.
 
-### Task 5: Handoff and integration review
+### Task 7: Handoff and integration review
 
 **Files:**
-- Update: `docs/STATUS.md`, `docs/ROADMAP.md`, `README.md`, and relevant architecture/compatibility notes.
+- Create/update: `docs/ROADMAP.md`, `docs/STATUS.md`, `README.md`, and architecture notes.
 
-- [ ] Run the full `pnpm verify` and browser E2E on the integrated branch.
+- [ ] Run the full `pnpm verify`, browser E2E, and production build on the integrated branch.
 - [ ] Confirm host binds to loopback and no shell execution route exists.
 - [ ] Record what the fake slice proves and what it does not prove.
 - [ ] Update status with current milestone and next three tasks.
