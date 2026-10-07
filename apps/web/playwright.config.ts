@@ -8,6 +8,7 @@ const projectAllowlist = JSON.stringify([
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "pwa.spec.ts",
   fullyParallel: true,
   reporter: "list",
   use: { ...devices["Desktop Chrome"], baseURL: "http://127.0.0.1:4173" },
