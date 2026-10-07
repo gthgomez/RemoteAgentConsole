@@ -396,10 +396,6 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
           .code(502)
           .send(emptyError("runtime_error", "Runtime rejected the permission response"));
       }
-      append(permission.sessionId, {
-        eventType: "permission.resolved",
-        payload: { permissionId, optionId: parsed.data.optionId },
-      });
       return reply.code(200).send(body);
     },
   );
