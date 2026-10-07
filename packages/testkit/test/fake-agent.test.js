@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import test from 'node:test';
 
 const entry = fileURLToPath(new URL('../src/fake-agent.js', import.meta.url));
@@ -58,8 +57,6 @@ function startAgent() {
   return { child, send, request, waitFor, close, messages, get stderr() { return stderr; } };
 }
 
-const req = (method, params) => ({ jsonrpc: '2.0', id: 1000, method, params });
-
 test('initializes and creates a session with deterministic capabilities', async t => {
   const agent = startAgent();
   t.after(() => agent.close());
@@ -84,10 +81,31 @@ test('streams assistant text, tool activity, waits for permission, and completes
   assert.equal(tool.params.update.title, 'Read project status');
   const permission = await agent.waitFor(message => message.method === 'session/request_permission');
   assert.deepEqual(permission.params.options.map(option => option.optionId), ['allow-once', 'reject-once']);
-  agent.send({ jsonrpc: '2.0', id: permission.id, result: { outcome: 'selected', optionId: 'allow-once' } });
+  agent.send({ jsonrpc: '2.0', id: permission.id, result: { outcome: { outcome: 'selected', optionId: 'allow-once' } } });
   const answer = await prompt;
   assert.equal(answer.result.stopReason, 'end_turn');
-  assert.ok(agent.messages?.some(message => message.method === 'session/update' && message.params.update.sessionUpdate === 'agent_message_chunk'));
+  assert.ok(agent.messages.some(message => message.method === 'session/update' && message.params.update.sessionUpdate === 'agent_message_chunk' && message.params.update.content.text.includes('Permission approved')));
+  assert.ok(agent.messages.some(message => message.method === 'session/update' && message.params.update.sessionUpdate === 'tool_call_update' && message.params.update.toolCallId === tool.params.update.toolCallId && message.params.update.status === 'completed'));
+});
+
+test('uses a distinct deterministic tool call id for each prompt in one session', async t => {
+  const agent = startAgent();
+  t.after(() => agent.close());
+  await agent.request('initialize', { protocolVersion: 1, clientCapabilities: {} });
+  await agent.request('session/new', { cwd: process.cwd(), mcpServers: [] });
+
+  const toolIds = [];
+  for (const [turn, promptText] of ['first turn', 'second turn'].entries()) {
+    const prompt = agent.request('session/prompt', { sessionId: 'fake-session', prompt: [{ type: 'text', text: promptText }] });
+    const expectedId = `fake-status-tool-${turn + 1}`;
+    const permission = await agent.waitFor(message => message.method === 'session/request_permission' && message.params.toolCall.toolCallId === expectedId);
+    toolIds.push(permission.params.toolCall.toolCallId);
+    agent.send({ jsonrpc: '2.0', id: permission.id, result: { outcome: { outcome: 'selected', optionId: 'allow-once' } } });
+    assert.equal((await prompt).result.stopReason, 'end_turn');
+  }
+
+  assert.deepEqual(toolIds, ['fake-status-tool-1', 'fake-status-tool-2']);
+  assert.notEqual(toolIds[0], toolIds[1]);
 });
 
 test('cancels an in-flight prompt', async t => {
