@@ -35,6 +35,11 @@ type DeferredPermission = {
   options: readonly acp.PermissionOption[];
 };
 
+const PROCESS_FAILURE_MESSAGE = "The runtime process failed.";
+const INITIALIZATION_FAILURE_MESSAGE = "The runtime could not initialize ACP.";
+const PROMPT_FAILURE_MESSAGE = "The runtime could not complete the prompt.";
+const SESSION_CREATION_FAILURE_MESSAGE = "The runtime could not create a session.";
+
 export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdapter {
   return {
     id: options.id,
@@ -57,7 +62,7 @@ export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdap
       const emit = (event: RuntimeEvent) => {
         for (const listener of listeners) listener(event);
       };
-      const fail = (message: string) => {
+      const fail = (message = PROCESS_FAILURE_MESSAGE) => {
         if (ended) return;
         ended = true;
         for (const permission of permissions.values()) {
@@ -115,10 +120,9 @@ export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdap
         }
       });
       child.stderr.on("data", () => {});
-      child.once("error", (error) => fail(error.message));
-      child.once("exit", (code, signal) => {
-        if (!ended)
-          fail(`ACP process exited (code ${code ?? "unknown"}, signal ${signal ?? "none"})`);
+      child.once("error", () => fail());
+      child.once("exit", () => {
+        if (!ended) fail();
       });
       const connection = app.connect(
         acp.ndJsonStream(
@@ -133,9 +137,9 @@ export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdap
           clientCapabilities: {},
           clientInfo: { name: "remote-agent-console", version: "0.1.0" },
         });
-      } catch (error) {
-        fail(error instanceof Error ? error.message : "ACP initialization failed");
-        throw error;
+      } catch {
+        fail();
+        throw new Error(INITIALIZATION_FAILURE_MESSAGE);
       }
       const capabilities = projectCapabilities(initialized.agentCapabilities);
       let session: RuntimeSession | undefined;
@@ -143,10 +147,15 @@ export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdap
         capabilities,
         async createSession() {
           if (session) throw new Error("ACP connection already has a session");
-          const created = await connection.agent.request(acp.methods.agent.session.new, {
-            cwd,
-            mcpServers: [],
-          });
+          let created: acp.NewSessionResponse;
+          try {
+            created = await connection.agent.request(acp.methods.agent.session.new, {
+              cwd,
+              mcpServers: [],
+            });
+          } catch {
+            throw new Error(SESSION_CREATION_FAILURE_MESSAGE);
+          }
           sessionId = created.sessionId;
           const sessionCapabilities = { ...capabilities, modes: Boolean(created.modes) };
           session = {
@@ -178,9 +187,7 @@ export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdap
                     });
                   }
                 })
-                .catch((error: unknown) =>
-                  fail(error instanceof Error ? error.message : "ACP prompt failed"),
-                );
+                .catch(() => fail(PROMPT_FAILURE_MESSAGE));
             },
             async cancel() {
               if (!sessionId || ended) return;

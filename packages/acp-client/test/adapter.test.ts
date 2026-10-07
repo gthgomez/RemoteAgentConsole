@@ -9,12 +9,12 @@ afterEach(async () => {
   await Promise.all(sessions.splice(0).map((session) => session.close()));
 });
 
-function adapter(script = fakeAgent.pathname) {
+function adapter(script = fakeAgent.pathname, extraArgs: string[] = []) {
   return createAcpRuntimeAdapter({
     id: "fake",
     displayName: "Fake ACP",
     command: process.execPath,
-    args: [script],
+    args: [script, ...extraArgs],
     projects: { demo: process.cwd() },
   });
 }
@@ -111,7 +111,58 @@ describe("ACP runtime adapter", () => {
       args: ["-e", "process.exit(23)"],
       projects: { demo: process.cwd() },
     });
-    await expect(failed.connect({ projectId: "demo" })).rejects.toThrow();
+    await expect(failed.connect({ projectId: "demo" })).rejects.toThrow(
+      "The runtime could not initialize ACP.",
+    );
+  });
+
+  it("does not expose a local executable path when the child cannot be spawned", async () => {
+    const secretPath = `${process.cwd()}/private/runtime-binary`;
+    const failed = createAcpRuntimeAdapter({
+      id: "missing",
+      displayName: "Missing",
+      command: secretPath,
+      projects: { demo: process.cwd() },
+    });
+
+    const error = await failed.connect({ projectId: "demo" }).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("The runtime could not initialize ACP.");
+    expect((error as Error).message).not.toContain(secretPath);
+  });
+
+  it("sanitizes local paths in ACP protocol errors before emitting session.error", async () => {
+    const connection = await adapter(
+      new URL("./protocol-error-agent.js", import.meta.url).pathname,
+    ).connect({ projectId: "demo" });
+    const session = await connection.createSession();
+    sessions.push(session);
+    const event = new Promise<Extract<RuntimeEvent, { type: "session.error" }>>((resolve) => {
+      session.subscribe((entry) => {
+        if (entry.type === "session.error") resolve(entry);
+      });
+    });
+
+    await session.prompt("fail with a private path");
+
+    const failure = await event;
+    expect(failure.message).toBe("The runtime could not complete the prompt.");
+    expect(failure.message).not.toContain(process.cwd());
+  });
+
+  it("sanitizes local paths in ACP session creation failures", async () => {
+    const connection = await adapter(
+      new URL("./protocol-error-agent.js", import.meta.url).pathname,
+      ["session-new"],
+    ).connect({ projectId: "demo" });
+    try {
+      const error = await connection.createSession().catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("The runtime could not create a session.");
+      expect((error as Error).message).not.toContain(process.cwd());
+    } finally {
+      await connection.close();
+    }
   });
 
   it("reports a child crash after session creation", async () => {
@@ -123,11 +174,13 @@ describe("ACP runtime adapter", () => {
     expect(connection.capabilities.sessions).toEqual({ create: true, resume: true, list: true });
     const session = await connection.createSession();
     sessions.push(session);
-    const failed = new Promise<void>((resolve) => {
+    const failed = new Promise<Extract<RuntimeEvent, { type: "session.error" }>>((resolve) => {
       session.subscribe((event) => {
-        if (event.type === "session.error") resolve();
+        if (event.type === "session.error") resolve(event);
       });
     });
-    await failed;
+    const error = await failed;
+    expect(error.message).toBe("The runtime process failed.");
+    expect(error.message).not.toContain(process.cwd());
   });
 });
