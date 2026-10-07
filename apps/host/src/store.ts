@@ -395,16 +395,24 @@ export class SQLiteHostStore extends BaseHostStore implements AuthStore {
       .run(record.codeHash, record.expiresAt);
   }
 
-  consumePairing(codeHash: string): PairingRecord | null {
-    const consume = this.database.transaction(() => {
+  purgeExpiredPairings(now: number): void {
+    this.database.prepare("DELETE FROM pairings WHERE expires_at <= ?").run(now);
+  }
+
+  pairDevice(codeHash: string, now: number, record: DeviceRecord): boolean {
+    const pairDevice = this.database.transaction(() => {
       const row = this.database
         .prepare("SELECT code_hash, expires_at FROM pairings WHERE code_hash = ?")
         .get(codeHash) as { code_hash: string; expires_at: number } | undefined;
-      if (!row) return null;
+      if (!row || row.expires_at <= now) {
+        this.database.prepare("DELETE FROM pairings WHERE code_hash = ?").run(codeHash);
+        return false;
+      }
       this.database.prepare("DELETE FROM pairings WHERE code_hash = ?").run(codeHash);
-      return { codeHash: row.code_hash, expiresAt: row.expires_at };
+      this.putDevice(record);
+      return true;
     });
-    return consume.immediate();
+    return pairDevice.immediate();
   }
 
   putDevice(record: DeviceRecord): void {

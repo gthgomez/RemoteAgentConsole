@@ -25,7 +25,8 @@ export type PublicDevice = Omit<DeviceRecord, "credentialHash">;
 /** Implementations must consume a pairing record atomically. */
 export interface AuthStore {
   putPairing(record: PairingRecord): void;
-  consumePairing(codeHash: string): PairingRecord | null;
+  purgeExpiredPairings(now: number): void;
+  pairDevice(codeHash: string, now: number, record: DeviceRecord): boolean;
   putDevice(record: DeviceRecord): void;
   listDeviceRecords(): DeviceRecord[];
   revokeDevice(id: string, revokedAt: number): boolean;
@@ -90,7 +91,9 @@ export class PairingAuthService {
 
   issuePairingCode(): { code: string; expiresAt: number } {
     const code = securePairingCode();
-    const expiresAt = this.now() + this.pairingTtlMs;
+    const now = this.now();
+    const expiresAt = now + this.pairingTtlMs;
+    this.store.purgeExpiredPairings(now);
     this.store.putPairing({ codeHash: hashPairingCode(code.replace("-", "")), expiresAt });
     return { code, expiresAt };
   }
@@ -98,10 +101,7 @@ export class PairingAuthService {
   exchangePairingCode(codeInput: string, displayName: string): PairedDeviceResult | null {
     const code = normalizePairingCode(codeInput);
     if (!code) return null;
-    const pairing = this.store.consumePairing(hashPairingCode(code));
     const now = this.now();
-    if (!pairing || pairing.expiresAt <= now) return null;
-
     const credential = randomBytes(32).toString("base64url");
     const record: DeviceRecord = {
       id: randomUUID(),
@@ -111,7 +111,7 @@ export class PairingAuthService {
       lastSeenAt: now,
       revokedAt: null,
     };
-    this.store.putDevice(record);
+    if (!this.store.pairDevice(hashPairingCode(code), now, record)) return null;
     return { device: publicDevice(record), credential };
   }
 
@@ -197,10 +197,22 @@ export class InMemoryAuthStore implements AuthStore {
     this.pairings.set(record.codeHash, record);
   }
 
-  consumePairing(codeHash: string): PairingRecord | null {
-    const record = this.pairings.get(codeHash) ?? null;
+  purgeExpiredPairings(now: number): void {
+    for (const [codeHash, record] of this.pairings) {
+      if (record.expiresAt <= now) this.pairings.delete(codeHash);
+    }
+  }
+
+  pairDevice(codeHash: string, now: number, record: DeviceRecord): boolean {
+    const pairing = this.pairings.get(codeHash);
+    if (!pairing || pairing.expiresAt <= now) {
+      this.pairings.delete(codeHash);
+      return false;
+    }
+    // Write before consuming so a failed device insert leaves the code usable.
+    this.putDevice(record);
     this.pairings.delete(codeHash);
-    return record;
+    return true;
   }
 
   putDevice(record: DeviceRecord): void {

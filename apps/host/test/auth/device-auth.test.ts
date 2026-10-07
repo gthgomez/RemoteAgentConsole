@@ -40,6 +40,26 @@ describe("PairingAuthService", () => {
     expect(service.exchangePairingCode(pairing.code, "Again")).toBeNull();
   });
 
+  it("preserves a pairing code if storing the new device fails", () => {
+    const store = new InMemoryAuthStore();
+    const originalPutDevice = store.putDevice.bind(store);
+    let failNextWrite = true;
+    store.putDevice = (record) => {
+      if (failNextWrite) {
+        failNextWrite = false;
+        throw new Error("simulated database write failure");
+      }
+      originalPutDevice(record);
+    };
+    const service = new PairingAuthService(store);
+    const pairing = service.issuePairingCode();
+
+    expect(() => service.exchangePairingCode(pairing.code, "Phone")).toThrow(
+      "simulated database write failure",
+    );
+    expect(service.exchangePairingCode(pairing.code, "Phone")).not.toBeNull();
+  });
+
   it("rejects expired pairing codes and malformed credentials", () => {
     let now = 0;
     const service = new PairingAuthService(new InMemoryAuthStore(), {

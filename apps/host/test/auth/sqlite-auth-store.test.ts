@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { PairingAuthService } from "../../src/auth/device-auth.js";
 import { SQLiteHostStore } from "../../src/store.js";
@@ -20,23 +21,83 @@ afterEach(() => {
 });
 
 describe("SQLiteHostStore auth persistence", () => {
-  it("atomically consumes a one-time pairing across database connections", () => {
+  it("removes expired pairing hashes when issuing a new code", () => {
+    const filename = databasePath();
+    let now = 1_000;
+    const store = new SQLiteHostStore({ filename });
+    const service = new PairingAuthService(store, { now: () => now, pairingTtlMs: 100 });
+    service.issuePairingCode();
+    now += 101;
+    service.issuePairingCode();
+
+    const database = new Database(filename, { readonly: true });
+    const row = database.prepare("SELECT COUNT(*) AS count FROM pairings").get() as {
+      count: number;
+    };
+    expect(row.count).toBe(1);
+    database.close();
+    store.close();
+  });
+
+  it("atomically creates one device from a one-time pairing across database connections", () => {
     const filename = databasePath();
     let now = 1_000;
     const first = new SQLiteHostStore({ filename });
     const service = new PairingAuthService(first, { now: () => now });
     const issued = service.issuePairingCode();
-    const codeHash = createHash("sha256")
-      .update(issued.code.replaceAll("-", ""), "utf8")
-      .digest("hex");
     const second = new SQLiteHostStore({ filename });
+    const secondService = new PairingAuthService(second, { now: () => now });
 
-    expect(first.consumePairing(codeHash)).toEqual({ codeHash, expiresAt: issued.expiresAt });
-    expect(second.consumePairing(codeHash)).toBeNull();
+    const firstPair = service.exchangePairingCode(issued.code, "first");
+    const secondPair = secondService.exchangePairingCode(issued.code, "second");
+    expect([firstPair, secondPair].filter(Boolean)).toHaveLength(1);
     now += 1;
-    expect(first.consumePairing(codeHash)).toBeNull();
+    expect(first.listDeviceRecords()).toHaveLength(1);
+    expect(second.listDeviceRecords()).toHaveLength(1);
     first.close();
     second.close();
+  });
+
+  it("rolls back pairing-code consumption if device creation fails", () => {
+    const filename = databasePath();
+    const store = new SQLiteHostStore({ filename });
+    const service = new PairingAuthService(store, { now: () => 1_000 });
+    const pairing = service.issuePairingCode();
+    const credentialHash = createHash("sha256").update("existing").digest("hex");
+    const deviceId = randomUUID();
+    store.putDevice({
+      id: deviceId,
+      displayName: "Existing",
+      credentialHash,
+      createdAt: 1,
+      lastSeenAt: null,
+      revokedAt: null,
+    });
+    const codeHash = createHash("sha256")
+      .update(pairing.code.replaceAll("-", ""), "utf8")
+      .digest("hex");
+
+    expect(() =>
+      store.pairDevice(codeHash, 1_000, {
+        id: deviceId,
+        displayName: "Duplicate",
+        credentialHash: null as unknown as string,
+        createdAt: 1_000,
+        lastSeenAt: 1_000,
+        revokedAt: null,
+      }),
+    ).toThrow();
+    expect(
+      store.pairDevice(codeHash, 1_000, {
+        id: randomUUID(),
+        displayName: "Retry",
+        credentialHash,
+        createdAt: 1_000,
+        lastSeenAt: 1_000,
+        revokedAt: null,
+      }),
+    ).toBe(true);
+    store.close();
   });
 
   it("persists credential hashes, last-seen timestamps, and device revocation", () => {
