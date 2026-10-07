@@ -4,10 +4,10 @@ This roadmap follows the supplied Remote Agent Console campaign. “In progress�
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| 0 | Monorepo foundation and verification gate | In progress |
-| 1 | Deterministic fake ACP vertical slice | In progress |
-| 2 | Command Code ACP integration and observed compatibility | Not started |
-| 3 | OpenCode ACP integration and observed compatibility | Not started |
+| 0 | Monorepo foundation and verification gate | Complete |
+| 1 | Deterministic fake ACP vertical slice | In progress — live-host browser E2E pending |
+| 2 | Command Code ACP integration and observed compatibility | In progress — wrapper and initialize/session smoke done; prompt/permission compatibility pending |
+| 3 | OpenCode ACP integration and observed compatibility | In progress — wrapper and initialize/session smoke done; prompt/permission compatibility pending |
 | 4 | SQLite persistence, replay, idempotency, and host restart behavior | Not started |
 | 5 | Pairing, device credentials, rate limits, and Tailscale Serve setup | Not started |
 | 6 | Mobile PWA UX and real-device Windows/Android workflow | Not started |

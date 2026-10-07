@@ -9,10 +9,28 @@ A local-first control plane for coding-agent sessions. The host runs agents on y
 
 ## Development
 
+Install dependencies first:
+
 ```sh
 pnpm install
+```
+
+The current development host uses a deterministic fake ACP runtime. It only starts sessions in explicitly allowlisted folders. Set `RAC_PROJECTS_JSON` before starting the services:
+
+PowerShell:
+
+```powershell
+$env:RAC_PROJECTS_JSON = '[{"id":"demo","displayName":"Demo project","path":"C:\\code\\Demo"}]'
 pnpm dev
 ```
+
+Bash:
+
+```sh
+RAC_PROJECTS_JSON='[{"id":"demo","displayName":"Demo project","path":"/home/me/code/Demo"}]' pnpm dev
+```
+
+The host listens on `127.0.0.1:4318`; Vite serves the PWA and proxies `/api` to the host. The project path stays on the host and is never returned by the API.
 
 ## Quality checks
 
