@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type { RuntimeCapabilities } from "@remote-agent-console/contracts";
@@ -51,7 +52,6 @@ export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdap
       const listeners = new Set<(event: RuntimeEvent) => void>();
       const permissions = new Map<string, DeferredPermission>();
       let turnId = "turn-1";
-      let permissionSequence = 0;
       let sessionId: string | undefined;
       let ended = false;
       const emit = (event: RuntimeEvent) => {
@@ -68,7 +68,7 @@ export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdap
       };
 
       app.onRequest(acp.methods.client.session.requestPermission, ({ params }) => {
-        const permissionId = `permission-${++permissionSequence}`;
+        const permissionId = `permission-${randomUUID()}`;
         return new Promise<acp.RequestPermissionResponse>((resolve) => {
           permissions.set(permissionId, { resolve, options: params.options });
           emit({
