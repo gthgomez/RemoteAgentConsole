@@ -92,4 +92,19 @@ describe("canonicalizeConfiguredProjects", () => {
       ]),
     ).rejects.toThrow(/duplicate project id/i);
   });
+
+  it("normalizes configured IDs and names to the catalog values", async () => {
+    const projectPath = path.join(tempDirectory, "project");
+    await mkdir(projectPath);
+
+    const projects = await canonicalizeConfiguredProjects([
+      { id: "  demo  ", displayName: "  Demo project  ", path: projectPath },
+    ]);
+
+    expect(projects[0]).toEqual({
+      id: "demo",
+      displayName: "Demo project",
+      path: await realpath(projectPath),
+    });
+  });
 });
