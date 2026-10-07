@@ -35,7 +35,7 @@ export const messageDeltaPayloadSchema = z.object({ turnId: nonEmpty, text: z.st
 export const toolUpdatedPayloadSchema = z.object({ turnId: nonEmpty, toolCallId: nonEmpty, title: nonEmpty, status: z.enum(['pending', 'running', 'completed', 'failed']) }).strict();
 export const permissionRequestedPayloadSchema = z.object({
   turnId: nonEmpty, permissionId: nonEmpty, title: nonEmpty,
-  options: z.array(z.object({ optionId: exactNonEmpty, name: nonEmpty, kind: z.string().optional() }).passthrough()).min(1),
+  options: z.array(z.object({ optionId: exactNonEmpty, name: exactNonEmpty, kind: z.string().optional() }).passthrough()).min(1),
 }).strict();
 export const permissionResolvedPayloadSchema = z.object({ permissionId: nonEmpty, optionId: exactNonEmpty }).strict();
 export const turnCompletedPayloadSchema = z.object({ turnId: nonEmpty }).strict();
