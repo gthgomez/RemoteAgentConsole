@@ -32,14 +32,41 @@ export function beginTurn(session: DomainSession, input: { id: string; prompt: s
   if (session.activeTurn && ['running', 'waiting_permission', 'waiting_input'].includes(session.activeTurn.status)) {
     throw new Error(`Session ${session.id} already has an active turn`);
   }
-  if (session.status !== 'idle' && session.status !== 'completed') throw new Error(`Cannot start turn while session is ${session.status}`);
+  if (session.status !== 'idle') throw new Error(`Cannot start turn while session is ${session.status}`);
   return { ...session, status: 'running', updatedAt: new Date().toISOString(), activeTurn: { id: input.id, prompt: input.prompt, status: 'running' } };
 }
 
+const terminalTurnStatuses: readonly Turn['status'][] = ['completed', 'failed', 'cancelled'];
+const allowedTurnTransitions: Record<Turn['status'], readonly Turn['status'][]> = {
+  running: ['waiting_permission', 'waiting_input', 'completed', 'failed', 'cancelled'],
+  waiting_permission: ['running', 'waiting_input', 'completed', 'failed', 'cancelled'],
+  waiting_input: ['running', 'waiting_permission', 'completed', 'failed', 'cancelled'],
+  completed: [], failed: [], cancelled: [],
+};
+
 export function setTurnStatus(session: DomainSession, status: Turn['status'], now = new Date().toISOString()): DomainSession {
-  if (!session.activeTurn) throw new Error('Session has no active turn');
-  const sessionStatus: SessionStatus = status === 'waiting_permission' || status === 'waiting_input' ? status : status === 'running' ? 'running' : status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'idle';
-  return { ...session, status: sessionStatus, updatedAt: now, activeTurn: { ...session.activeTurn, status } };
+  const turn = session.activeTurn;
+  if (!turn) throw new Error('Session has no active turn');
+  if (terminalTurnStatuses.includes(turn.status)) throw new Error(`Cannot update terminal turn ${turn.id}`);
+  if (turn.status === status) return session;
+  if (!allowedTurnTransitions[turn.status].includes(status)) {
+    throw new Error(`Illegal turn transition: ${turn.status} -> ${status}`);
+  }
+
+  const nextSessionStatus: SessionStatus = status === 'waiting_permission' || status === 'waiting_input'
+    ? status
+    : status === 'running'
+      ? 'running'
+      : status === 'failed'
+        ? 'failed'
+        : status === 'completed'
+          ? 'completed'
+          : 'idle';
+  const transitioned = transitionSession(session, nextSessionStatus, now);
+  return {
+    ...transitioned,
+    activeTurn: terminalTurnStatuses.includes(status) ? null : { ...turn, status },
+  };
 }
 
 export function respondToPermission(permission: PendingPermission, optionId: string): { success: true; optionId: string } | { success: false } {
