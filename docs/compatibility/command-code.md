@@ -29,9 +29,26 @@ Checked on 2026-10-07 in the development environment:
 - `command-code --version` reported `1.75.1`.
 - `command-code acp --help` succeeded and described the stdio ACP mode.
 - `command-code status` reported `authenticated`.
+- A live smoke through `createCommandCodeAdapter` initialized ACP, created a
+  session with the repository as `cwd`, and closed it without sending a prompt.
+  The adapter returned these session capabilities:
+
+  ```json
+  {
+    "sessions": { "create": true, "resume": true, "list": true },
+    "interaction": { "cancel": true, "permissions": true, "questions": false },
+    "models": { "selectable": false, "effort": false },
+    "modes": true,
+    "plans": false,
+    "commands": false,
+    "images": true,
+    "files": false
+  }
+  ```
 
 This confirms local installation, version, ACP command availability, and
-authentication status. No real ACP initialization or prompt was run during
-this check, so it does not establish end-to-end compatibility with this local
-version. Command Code requires an account login or API key before authenticated
-use; see the [official quickstart](https://commandcode.ai/docs/quickstart).
+authentication status, as well as ACP initialization and session creation for
+this local version. No prompt was sent, so model response behavior and streamed
+updates remain unverified. Command Code requires an account login or API key
+before authenticated use; see the
+[official quickstart](https://commandcode.ai/docs/quickstart).
