@@ -9,7 +9,7 @@ This roadmap follows the supplied Remote Agent Console campaign. “In progress�
 | 2 | Command Code ACP integration and observed compatibility | In progress — host selection and initialize/session smoke done; prompt/permission compatibility pending |
 | 3 | OpenCode ACP integration and observed compatibility | In progress — host selection and initialize/session smoke done; prompt/permission compatibility pending |
 | 4 | SQLite persistence, replay, idempotency, and host restart behavior | In progress — durable state, a 10k-event-per-session replay window, 7-day idempotency retention, and interrupted-turn recovery implemented; runtime session reattachment remains |
-| 5 | Pairing, device credentials, rate limits, and Tailscale Serve setup | In progress — pairing, authenticated REST/SSE, rate limits, bounded SSE streams, durable credentials, and Serve runbook implemented; real-device check pending |
+| 5 | Pairing, device credentials, rate limits, and Tailscale Serve setup | In progress — pairing, authenticated REST/SSE, rate limits, bounded/backpressure-aware SSE streams, durable credentials, and Serve runbook implemented; real-device check pending |
 | 6 | Mobile PWA UX and real-device Windows/Android workflow | In progress — installable offline shell and pairing/session UX implemented; real-device workflow pending |
 | MVP gate | Twenty-step real-device acceptance evidence | Not started |
 | Post-MVP | Reliability, polish, attachments, notifications, and multi-machine support | Deferred |

@@ -6,9 +6,9 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 
 ## Latest known-green commit
 
-`dd3682b` — `fix(client): recover expired SSE event cursors`
+`b49cc43` — `fix(host): disconnect slow SSE clients`
 
-`pnpm verify`, `pnpm build`, `pnpm --filter @remote-agent-console/web test:e2e` (10 tests), and `pnpm --filter @remote-agent-console/web test:pwa` passed on the integrated tree. All 44 host tests passed, including production static serving, SSE capacity/recovery, persistence retention, and authentication.
+`pnpm verify`, `pnpm build`, `pnpm --filter @remote-agent-console/web test:e2e` (10 tests), and `pnpm --filter @remote-agent-console/web test:pwa` passed on the integrated tree. All 48 host tests passed, including production static serving, SSE capacity/backpressure/recovery, persistence retention, and authentication.
 
 ## What works today
 
@@ -19,6 +19,7 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 - `SQLiteHostStore` implements the device `AuthStore` boundary with atomic one-time pairing and device creation, hash-only credential persistence, last-seen updates, revocation, and expired-code cleanup.
 - Normal host startup enables paired-device auth, prints a one-time code, protects APIs, and rate-limits pairing attempts, auth failures, and mutations. The PWA keeps credentials in IndexedDB and uses authenticated REST plus fetch-based SSE with `Last-Event-ID` replay.
 - SSE streams are capped at 64 globally and 4 per device by default. SQLite retains up to 10,000 events per session, protecting active turns and pending permissions; expired cursors get an HTTP 410 with a recovery sequence that the client uses to replay retained history. Idempotency keys are retained for seven days by default. Configure with `RAC_EVENT_HISTORY_LIMIT` and `RAC_IDEMPOTENCY_RETENTION_MS`.
+- Slow SSE consumers are disconnected when the host write buffer applies backpressure, so the client can reconnect and replay. The client stops on permanent 4xx errors, honors bounded `Retry-After`, and applies capped exponential backoff to transient failures.
 - Permission choices are the runtime's exact ACP options; duplicate permission events, stale pending permissions, and cross-session permission ID collisions are covered.
 - Runtime process failure clears active turns and reports a sanitized visible failure.
 - Mobile-first installable PWA with app-shell offline caching, device pairing, authenticated session creation/activity, tool cards, permission controls, cancellation, and reconnect/reload behavior.
