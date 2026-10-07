@@ -18,9 +18,20 @@ import {
   sessionSchema,
   sessionsResponseSchema,
 } from "@remote-agent-console/contracts";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import {
+  InMemoryRateLimiter,
+  type PairingAuthService,
+  type RateLimitResult,
+} from "./auth/device-auth.js";
 import type { RuntimeEvent, RuntimeSupervisorPort } from "./ports.js";
 import { type IdempotencyResult, InMemoryHostStore, type StoredSession } from "./store.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    authenticatedDeviceId: string | null;
+  }
+}
 
 export interface HostProject {
   id: string;
@@ -33,6 +44,11 @@ export interface HostAppOptions {
   projects: readonly HostProject[];
   supervisor: RuntimeSupervisorPort;
   store?: InMemoryHostStore;
+  pairingAuth?: PairingAuthService;
+  rateLimiter?: InMemoryRateLimiter;
+  pairingRateLimit?: { limit: number; windowMs: number };
+  authFailureRateLimit?: { limit: number; windowMs: number };
+  mutationRateLimit?: { limit: number; windowMs: number };
   makeId?: (kind: "session" | "turn" | "event") => string;
 }
 
@@ -42,7 +58,12 @@ const activeStatuses = new Set(["running", "waiting_permission", "waiting_input"
 
 export function createHostApp(options: HostAppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
+  app.decorateRequest("authenticatedDeviceId", null);
   const store = options.store ?? new InMemoryHostStore();
+  const rateLimiter = options.rateLimiter ?? new InMemoryRateLimiter();
+  const pairingRateLimit = options.pairingRateLimit ?? { limit: 5, windowMs: 60_000 };
+  const authFailureRateLimit = options.authFailureRateLimit ?? { limit: 20, windowMs: 60_000 };
+  const mutationRateLimit = options.mutationRateLimit ?? { limit: 60, windowMs: 60_000 };
   const makeId = options.makeId ?? ((kind: string) => `${kind}-${randomUUID()}`);
   const projects = new Map(options.projects.map((project) => [project.id, project]));
   app.addHook("onClose", async () => {
@@ -61,6 +82,78 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
     }
     app.log.error(error);
     return reply.code(400).send(emptyError("bad_request", "Request could not be parsed"));
+  });
+
+  const rateLimited = (result: RateLimitResult, reply: FastifyReply) => {
+    if (result.allowed) return false;
+    reply
+      .header("retry-after", String(Math.ceil(result.retryAfterMs / 1_000)))
+      .code(429)
+      .send(emptyError("rate_limited", "Too many requests; try again later"));
+    return true;
+  };
+
+  app.addHook("onRequest", async (request, reply) => {
+    if (!options.pairingAuth) return;
+    const path = request.url.split("?", 1)[0];
+    if (request.method === "GET" && path === "/api/v1/health") return;
+    if (request.method === "POST" && path === "/api/v1/devices/pair") {
+      if (
+        rateLimited(
+          rateLimiter.consume(
+            `pair:${request.ip}`,
+            pairingRateLimit.limit,
+            pairingRateLimit.windowMs,
+          ),
+          reply,
+        )
+      ) {
+        return;
+      }
+      return;
+    }
+
+    const authHeader = request.headers.authorization;
+    const match =
+      typeof authHeader === "string" ? /^Bearer ([A-Za-z0-9_-]{43})$/.exec(authHeader) : null;
+    const credential = match?.[1];
+    const denyAuth = () =>
+      rateLimited(
+        rateLimiter.consume(
+          `auth:${request.ip}`,
+          authFailureRateLimit.limit,
+          authFailureRateLimit.windowMs,
+        ),
+        reply,
+      );
+    if (!credential) {
+      if (denyAuth()) return;
+      return reply
+        .code(401)
+        .send(emptyError("auth_required", "A paired device credential is required"));
+    }
+    const device = options.pairingAuth.authenticate(credential);
+    if (!device) {
+      if (denyAuth()) return;
+      return reply
+        .code(401)
+        .send(emptyError("auth_required", "A paired device credential is required"));
+    }
+    request.authenticatedDeviceId = device.id;
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      if (
+        rateLimited(
+          rateLimiter.consume(
+            `mutation:${device.id}`,
+            mutationRateLimit.limit,
+            mutationRateLimit.windowMs,
+          ),
+          reply,
+        )
+      ) {
+        return;
+      }
+    }
   });
 
   const expirePendingPermissions = (sessionId: string, turnId: string) => {
@@ -166,6 +259,41 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
   };
 
   app.get("/api/v1/health", async () => healthResponseSchema.parse({ status: "ok" }));
+
+  app.post<{ Body: { code?: unknown; displayName?: unknown } }>(
+    "/api/v1/devices/pair",
+    async (request, reply) => {
+      if (!options.pairingAuth)
+        return reply.code(404).send(emptyError("not_found", "Pairing is unavailable"));
+      const { code, displayName } = request.body ?? {};
+      if (typeof code !== "string" || typeof displayName !== "string" || displayName.length > 120) {
+        return reply.code(400).send(emptyError("validation_error", "Invalid pairing request"));
+      }
+      const paired = options.pairingAuth.exchangePairingCode(code, displayName);
+      if (!paired)
+        return reply
+          .code(401)
+          .send(emptyError("pairing_invalid", "Pairing code is invalid or expired"));
+      return reply.code(201).send(paired);
+    },
+  );
+
+  app.get("/api/v1/devices", async (_request, reply) => {
+    if (!options.pairingAuth)
+      return reply.code(404).send(emptyError("not_found", "Device management is unavailable"));
+    return reply.send({ devices: options.pairingAuth.listDevices() });
+  });
+
+  app.delete<{ Params: { deviceId: string } }>(
+    "/api/v1/devices/:deviceId",
+    async (request, reply) => {
+      if (!options.pairingAuth)
+        return reply.code(404).send(emptyError("not_found", "Device management is unavailable"));
+      if (!options.pairingAuth.revokeDevice(request.params.deviceId))
+        return reply.code(404).send(emptyError("device_not_found", "Device was not found"));
+      return reply.code(204).send();
+    },
+  );
 
   app.get("/api/v1/projects", async (_request, reply) => {
     const result = projectsResponseSchema.parse({
