@@ -18,19 +18,19 @@ Control coding-agent sessions running on the user's own computer from an install
 - Bind to loopback by default. No generic remote shell, cloud relay, or Tailscale Funnel in the MVP.
 - Do not resend a prompt automatically after process failure or reconnect.
 
-## Active scope: foundation and fake ACP vertical slice
+## Active scope: secure host and real-runtime MVP
 
-The first deliverable establishes the pnpm/TypeScript monorepo and a deterministic end-to-end slice:
+The repository foundation and deterministic fake ACP vertical slice are complete. The fake agent exercises the host API and PWA:
 
 ```text
 fake ACP child process -> host ACP client -> normalized events -> REST/SSE -> React PWA
 ```
 
-The fake agent must stream text, emit a tool activity update, request a permission with runtime-provided options, continue after a response, complete, and cancel. The browser must create a session, submit a prompt, follow events, respond to permission, see completion, and return to the same session after reload. No real Command Code/OpenCode integration is in this milestone.
+The next deliverables are complete production static serving, verified Command Code and OpenCode prompt/permission behavior, and an actual Windows plus Android acceptance run through private Tailscale Serve. Pairing, durable storage, authenticated REST/SSE, and the installable PWA are implemented, while host-restart runtime reattachment and real-device behavior remain open.
 
 ## Deferred scope
 
-Real runtime adapters, SQLite durability, device pairing, Tailscale setup, full mobile polish, and real-device acceptance follow the milestones in the original architecture brief. They are not implied complete by the fake slice.
+Hosted relay, cloud execution, generic remote shell, native mobile apps, push notifications, and extra runtime adapters remain deferred until the real-device MVP gate passes.
 
 ## Development gate
 

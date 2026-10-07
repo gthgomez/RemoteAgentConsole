@@ -15,7 +15,7 @@ Install dependencies first:
 pnpm install
 ```
 
-The current development host uses a deterministic fake ACP runtime. It only starts sessions in explicitly allowlisted folders. Set `RAC_PROJECTS_JSON` before starting the services:
+The host uses a deterministic fake ACP runtime by default and also detects Command Code and OpenCode when installed. It only starts sessions in explicitly allowlisted folders. Set `RAC_PROJECTS_JSON` before starting the services:
 
 PowerShell:
 
@@ -30,9 +30,11 @@ Bash:
 RAC_PROJECTS_JSON='[{"id":"demo","displayName":"Demo project","path":"/home/me/code/Demo"}]' pnpm dev
 ```
 
-The host listens on `127.0.0.1:4318`; Vite serves the PWA and proxies `/api` to the host. The project path stays on the host and is never returned by the API.
+`pnpm dev` starts the authenticated host and Vite PWA. The host listens on `127.0.0.1:4318`; Vite serves the PWA and proxies `/api` to it. The host prints a one-time pairing code at startup; enter it in the PWA to pair the browser. Paired credentials stay in IndexedDB, and project paths stay on the host.
 
-Normal `pnpm dev` uses the SQLite-backed device pairing and API authentication just like production, and prints a one-time pairing code at host startup. Enter that code in the PWA to pair the browser. `pnpm --filter @remote-agent-console/host dev:test` disables pairing only for the Playwright E2E host; do not use it for normal development or remote access.
+For browser E2E only, use `pnpm --filter @remote-agent-console/host dev:test` to start the isolated unauthenticated test host. Do not expose that test host to a network.
+
+The production host serves the built PWA from the same loopback service after `pnpm build`; start it with `pnpm --filter @remote-agent-console/host start`. See [the host guide](apps/host/README.md) and [private Tailscale Serve runbook](docs/runbooks/tailscale-serve.md) for configuration and phone access.
 
 ## Run the built app from one host service
 

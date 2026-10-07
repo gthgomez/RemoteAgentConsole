@@ -6,7 +6,7 @@ This runbook describes the intended private access path for a phone on the same 
 
 The production host serves the built PWA and API from one loopback service. API routes require a paired device credential; static app-shell files are public so the pairing screen can load. Tailscale access controls are an additional network layer, not a replacement for application authentication. See [STATUS](../STATUS.md) for remaining acceptance work.
 
-For development, `pnpm dev` starts Vite on `127.0.0.1:5173` and the API on `127.0.0.1:4318`; Vite proxies `/api` to the API. Serve the PWA port for a development smoke test so the phone and API share an origin. For regular use, build and run the single production host service below. Never bind either service to `0.0.0.0`.
+The PWA accepts the one-time code printed at host startup and stores the returned credential in IndexedDB. For development, `pnpm dev` starts Vite on `127.0.0.1:5173` and the API on `127.0.0.1:4318`; Vite proxies `/api` to the API. Serve the PWA port for a development smoke test so the phone and API share an origin. For regular use, build and run the single production host service below. Never bind either service to `0.0.0.0`.
 
 ## Preconditions
 
