@@ -16,14 +16,17 @@ export async function canonicalizeConfiguredProjects(
   const canonicalProjects: ConfiguredProject[] = [];
 
   for (const project of projects) {
-    if (!project.id.trim()) throw new Error("Configured project IDs must not be empty");
-    if (seenIds.has(project.id)) {
-      throw new Error(`Duplicate project ID: ${project.id}`);
+    const id = project.id.trim();
+    const displayName = project.displayName.trim();
+    if (!id) throw new Error("Configured project IDs must not be empty");
+    if (!displayName) throw new Error(`Configured project name for ID '${id}' must not be empty`);
+    if (seenIds.has(id)) {
+      throw new Error(`Duplicate project ID: ${id}`);
     }
-    seenIds.add(project.id);
+    seenIds.add(id);
 
     if (!isAbsolute(project.path)) {
-      throw new Error(`Configured project path for ID '${project.id}' must be absolute`);
+      throw new Error(`Configured project path for ID '${id}' must be absolute`);
     }
 
     let canonicalPath: string;
@@ -31,7 +34,7 @@ export async function canonicalizeConfiguredProjects(
       canonicalPath = await realpath(project.path);
     } catch {
       throw new Error(
-        `Configured project path for ID '${project.id}' does not exist or cannot be resolved`,
+        `Configured project path for ID '${id}' does not exist or cannot be resolved`,
       );
     }
 
@@ -42,18 +45,18 @@ export async function canonicalizeConfiguredProjects(
       isDirectory = false;
     }
     if (!isDirectory) {
-      throw new Error(`Configured project path for ID '${project.id}' must be a directory`);
+      throw new Error(`Configured project path for ID '${id}' must be a directory`);
     }
 
     const pathKey = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
     const existingId = seenPaths.get(pathKey);
     if (existingId) {
       throw new Error(
-        `Configured projects '${existingId}' and '${project.id}' resolve to the same canonical path`,
+        `Configured projects '${existingId}' and '${id}' resolve to the same canonical path`,
       );
     }
-    seenPaths.set(pathKey, project.id);
-    canonicalProjects.push({ ...project, path: canonicalPath });
+    seenPaths.set(pathKey, id);
+    canonicalProjects.push({ ...project, id, displayName, path: canonicalPath });
   }
 
   return canonicalProjects;
