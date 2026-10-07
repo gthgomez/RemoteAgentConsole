@@ -45,6 +45,12 @@ Checked on 2026-10-07 in the development environment:
     "files": false
   }
   ```
+- The host REST integration smoke also discovered version `1.75.1` and created
+  a session through `POST /api/v1/sessions` with HTTP 201; the returned status
+  was `idle`. It sent no prompt. The host catalog currently reports the
+  conservative generic-adapter capability set (create, cancel, and permissions
+  only), while the direct live session response above exposed additional
+  runtime capabilities.
 
 This confirms local installation, version, ACP command availability, and
 authentication status, as well as ACP initialization and session creation for

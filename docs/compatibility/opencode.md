@@ -29,4 +29,11 @@ OpenCode's current ACP documentation describes `opencode acp` as an ACP v1 subpr
 
 The smoke test closed the session immediately and sent no prompt, so it did not invoke a model or establish authentication, model availability, prompt streaming, or live permission behavior. The automated tests still use a fake executable forwarding to the deterministic ACP test agent; they verify process arguments, project cwd, stdio transport, and normalized text events.
 
+The host integration was also exercised through `GET /api/v1/runtimes` and
+`POST /api/v1/sessions` on 2026-10-07. It discovered version `2.0.24`, created
+an OpenCode session with HTTP 201, received status `idle`, and closed it without
+sending a prompt. The host catalog advertises only session creation,
+cancellation, and permissions; the live ACP session response above also
+reported resume/list and image support.
+
 The discovery summary intentionally advertises only capabilities currently exposed through the generic adapter path: session creation, cancellation, and permission requests. Live ACP additionally reported resume/list and image support; the current runtime-neutral session interface does not expose those features. Model selection, modes, commands, and files were not reported in this live capability response.
