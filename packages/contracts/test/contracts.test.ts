@@ -3,10 +3,74 @@ import {
   createSessionRequestSchema,
   eventEnvelopeSchema,
   permissionResponseRequestSchema,
+  projectSummarySchema,
   promptRequestSchema,
+  runtimeCapabilitiesSchema,
+  runtimeSummarySchema,
 } from "../src/index.js";
 
 describe("contracts", () => {
+  it("validates strict runtime and project catalogs without exposing paths", () => {
+    const project = { id: "project-1", displayName: "My project" };
+    expect(projectSummarySchema.parse(project)).toEqual(project);
+    expect(projectSummarySchema.safeParse({ ...project, path: "/home/user/project" }).success).toBe(
+      false,
+    );
+
+    const capabilities = {
+      sessions: { create: true, resume: true, list: true },
+      interaction: { cancel: true, permissions: true, questions: false },
+      models: { selectable: true, effort: true },
+      modes: true,
+      plans: false,
+      commands: true,
+      images: false,
+      files: true,
+    };
+    expect(runtimeCapabilitiesSchema.parse(capabilities)).toEqual(capabilities);
+    expect(
+      runtimeCapabilitiesSchema.safeParse({ ...capabilities, extraCapability: true }).success,
+    ).toBe(false);
+    expect(
+      runtimeCapabilitiesSchema.safeParse({
+        ...capabilities,
+        sessions: { ...capabilities.sessions, arbitrary: true },
+      }).success,
+    ).toBe(false);
+
+    expect(
+      runtimeSummarySchema.parse({
+        id: "fake",
+        displayName: "Fake ACP",
+        installed: true,
+        version: "1.0.0",
+        capabilities,
+      }),
+    ).toEqual({
+      id: "fake",
+      displayName: "Fake ACP",
+      installed: true,
+      version: "1.0.0",
+      capabilities,
+    });
+    expect(
+      runtimeSummarySchema.safeParse({
+        id: "missing",
+        displayName: "Missing runtime",
+        installed: false,
+        capabilities: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeSummarySchema.safeParse({
+        id: "fake",
+        displayName: "Fake ACP",
+        installed: true,
+        capabilities,
+        localPath: "/usr/bin/fake",
+      }).success,
+    ).toBe(false);
+  });
   it("validates session and prompt requests", () => {
     expect(
       createSessionRequestSchema.safeParse({ projectId: "project-1", runtimeId: "fake" }).success,
