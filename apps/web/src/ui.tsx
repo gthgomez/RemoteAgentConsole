@@ -148,20 +148,36 @@ export function App() {
         setSession((current) =>
           current ? { ...current, activeTurnId: null, status: "failed" } : current,
         );
-        setActivity((items) => [
-          ...items,
-          { id: `failed-${event.payload.turnId}`, kind: "error", text: event.payload.message },
-        ]);
+        setActivity((items) =>
+          items.some((item) => item.kind === "error" && item.text === event.payload.message)
+            ? items
+            : [
+                ...items,
+                {
+                  id: `failed-${event.payload.turnId}`,
+                  kind: "error",
+                  text: event.payload.message,
+                },
+              ],
+        );
         break;
       case "session.error":
         setPermission(null);
         setSession((current) =>
           current ? { ...current, activeTurnId: null, status: "failed" } : current,
         );
-        setActivity((items) => [
-          ...items,
-          { id: `session-error-${event.eventId}`, kind: "error", text: event.payload.message },
-        ]);
+        setActivity((items) =>
+          items.some((item) => item.kind === "error" && item.text === event.payload.message)
+            ? items
+            : [
+                ...items,
+                {
+                  id: `session-error-${event.eventId}`,
+                  kind: "error",
+                  text: event.payload.message,
+                },
+              ],
+        );
         break;
       case "session.status_changed":
         setSession((current) => (current ? { ...current, status: event.payload.status } : current));
