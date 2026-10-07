@@ -144,12 +144,23 @@ export function App() {
         ]);
         break;
       case "turn.failed":
+        setPermission(null);
         setSession((current) =>
           current ? { ...current, activeTurnId: null, status: "failed" } : current,
         );
         setActivity((items) => [
           ...items,
           { id: `failed-${event.payload.turnId}`, kind: "error", text: event.payload.message },
+        ]);
+        break;
+      case "session.error":
+        setPermission(null);
+        setSession((current) =>
+          current ? { ...current, activeTurnId: null, status: "failed" } : current,
+        );
+        setActivity((items) => [
+          ...items,
+          { id: `session-error-${event.eventId}`, kind: "error", text: event.payload.message },
         ]);
         break;
       case "session.status_changed":
@@ -213,6 +224,15 @@ export function App() {
       setPermission(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Permission response failed");
+    }
+  }
+
+  async function cancelActiveTurn() {
+    if (!session?.activeTurnId) return;
+    try {
+      await client.cancelTurn(sessionId, makeRequestId(), session.activeTurnId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not cancel the active turn");
     }
   }
 
@@ -411,6 +431,14 @@ export function App() {
                   </button>
                 ))}
               </div>
+              <button
+                type="button"
+                className="permission-cancel"
+                onClick={() => void cancelActiveTurn()}
+                disabled={!session?.activeTurnId}
+              >
+                Cancel this turn
+              </button>
             </section>
           </div>
         )}
