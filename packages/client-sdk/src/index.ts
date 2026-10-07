@@ -1,5 +1,6 @@
 import {
   type AcceptedResponse,
+  apiErrorSchema,
   type CreateSessionRequest,
   type EventEnvelope,
   eventEnvelopeSchema,
@@ -173,10 +174,13 @@ export class HostClient {
     const path = `${this.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/events`;
     let lastEventId: string | null = null;
     let stopped = false;
+    let halted = false;
+    let historyRecoveries = 0;
+    const maxHistoryRecoveries = 3;
     const reconnectDelayMs = 750;
 
     const connect = async () => {
-      while (!stopped) {
+      while (!stopped && !halted) {
         const headers = new Headers({ Accept: "text/event-stream" });
         if (lastEventId !== null) headers.set("Last-Event-ID", lastEventId);
         try {
@@ -188,16 +192,38 @@ export class HostClient {
             handlers.onReconnect();
             return;
           }
-          if (!response.ok || !response.body) throw new Error("Event stream unavailable");
-          handlers.onOpen?.();
-          await readEventStream(response.body, controller.signal, (id, data) => {
-            if (id) lastEventId = id;
-            try {
-              handlers.onEvent(eventEnvelopeSchema.parse(JSON.parse(data)));
-            } catch {
-              // Ignore malformed frames and keep the connection alive for later events.
+          if (response.status === 410) {
+            const body = await response.json().catch(() => undefined);
+            const parsed = apiErrorSchema.safeParse(body);
+            const oldestSequence = parsed.success ? parsed.data.error.oldestSequence : undefined;
+            if (
+              !parsed.success ||
+              parsed.data.error.code !== "event_history_expired" ||
+              oldestSequence === undefined ||
+              !Number.isSafeInteger(oldestSequence) ||
+              oldestSequence < 1 ||
+              historyRecoveries >= maxHistoryRecoveries
+            ) {
+              halted = true;
+              handlers.onReconnect();
+              return;
             }
-          });
+            lastEventId = String(oldestSequence - 1);
+            historyRecoveries += 1;
+          } else {
+            if (!response.ok || !response.body) throw new Error("Event stream unavailable");
+            handlers.onOpen?.();
+            await readEventStream(response.body, controller.signal, (id, data) => {
+              if (id) lastEventId = id;
+              try {
+                const event = eventEnvelopeSchema.parse(JSON.parse(data));
+                historyRecoveries = 0;
+                handlers.onEvent(event);
+              } catch {
+                // Ignore malformed frames and keep the connection alive for later events.
+              }
+            });
+          }
           if (!stopped) handlers.onReconnect();
         } catch {
           if (stopped) return;

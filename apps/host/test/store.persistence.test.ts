@@ -156,7 +156,7 @@ describe("SQLiteHostStore", () => {
 
     expect(response.statusCode).toBe(410);
     expect(response.json()).toMatchObject({
-      error: { code: "event_history_expired" },
+      error: { code: "event_history_expired", oldestSequence: 3 },
     });
     await app.close();
   });

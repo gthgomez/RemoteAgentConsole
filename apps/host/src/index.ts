@@ -662,14 +662,16 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
         return reply.code(404).send(emptyError("not_found", "Session was not found"));
       const oldestSequence = store.oldestEventSequence(sessionId);
       if (oldestSequence !== null && afterSequence < oldestSequence - 1) {
-        return reply
-          .code(410)
-          .send(
-            emptyError(
-              "event_history_expired",
-              "This event cursor is older than the retained replay history; reload the session before reconnecting",
-            ),
-          );
+        return reply.code(410).send(
+          apiErrorSchema.parse({
+            error: {
+              code: "event_history_expired",
+              message:
+                "This event cursor is older than the retained replay history; reload the session before reconnecting",
+              oldestSequence,
+            },
+          }),
+        );
       }
 
       const deviceId = request.authenticatedDeviceId ?? "unauthenticated";
