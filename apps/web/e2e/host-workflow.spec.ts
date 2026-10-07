@@ -63,7 +63,7 @@ test("real host reports a crashed fake ACP process and clears the running turn",
   await page.getByLabel("Message the agent").fill("crash");
   await page.getByRole("button", { name: "Send prompt" }).click();
 
-  const failureMessage = /ACP connection closed|ACP process exited \(code 42, signal none\)/;
+  const failureMessage = "The runtime could not complete the prompt.";
   await expect(page.getByText(failureMessage)).toBeVisible({ timeout: 10_000 });
   await expect(page.locator("article.event-error")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Stop" })).toBeDisabled();
