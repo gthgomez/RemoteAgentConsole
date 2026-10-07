@@ -46,6 +46,10 @@ function harness() {
         },
         cancel: async (turnId) => {
           calls.cancels.push(turnId);
+          emitRuntimeEvent?.({
+            eventType: "turn.failed",
+            payload: { turnId, message: "Turn cancelled" },
+          });
         },
         respondPermission: async (permissionId, optionId) => {
           calls.permissions.push({ permissionId, optionId });
@@ -64,7 +68,14 @@ function harness() {
     store,
     makeId: (kind) => `${kind}-${++sessionNumber}`,
   });
-  return { app, callbacks, calls, supervisor, store };
+  return {
+    app,
+    callbacks,
+    calls,
+    supervisor,
+    store,
+    emitRuntimeEvent: (event: unknown) => emitRuntimeEvent?.(event),
+  };
 }
 
 describe("host API", () => {
@@ -219,6 +230,85 @@ describe("host API", () => {
     });
     expect(cancelRetry.json()).toEqual(canceled.json());
     expect(calls.cancels).toEqual([turnId]);
+    await app.close();
+  });
+
+  it("fails the active turn on a runtime session error and clears the turn", async () => {
+    const { app, emitRuntimeEvent, store } = harness();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sessions",
+      payload: { requestId: "create-error", projectId: "project-1", runtimeId: "fake" },
+    });
+    const sessionId = created.json().session.id as string;
+    const accepted = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${sessionId}/prompts`,
+      payload: { requestId: "prompt-error", text: "run" },
+    });
+    const turnId = accepted.json().turnId as string;
+
+    emitRuntimeEvent({
+      eventType: "session.error",
+      payload: { message: "ACP process exited unexpectedly" },
+    });
+
+    const detail = await app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}` });
+    expect(detail.json().session).toMatchObject({ status: "failed", activeTurnId: null });
+    expect(store.events.get(sessionId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "turn.failed",
+          payload: { turnId, message: "ACP process exited unexpectedly" },
+        }),
+        expect.objectContaining({
+          eventType: "session.error",
+          payload: { message: "ACP process exited unexpectedly" },
+        }),
+      ]),
+    );
+    await app.close();
+  });
+
+  it("expires a pending permission when its active turn is canceled", async () => {
+    const { app, callbacks } = harness();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sessions",
+      payload: { requestId: "create-cancel-permission", projectId: "project-1", runtimeId: "fake" },
+    });
+    const sessionId = created.json().session.id as string;
+    const accepted = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${sessionId}/prompts`,
+      payload: { requestId: "prompt-cancel-permission", text: "run" },
+    });
+    const turnId = accepted.json().turnId as string;
+    callbacks.get(sessionId)?.({
+      eventType: "permission.requested",
+      payload: {
+        turnId,
+        permissionId: "permission-pending",
+        title: "Run?",
+        options: [{ optionId: "allow-once", name: "Allow once" }],
+      },
+    });
+
+    const canceled = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${sessionId}/cancel`,
+      payload: { requestId: "cancel-pending-permission", turnId },
+    });
+    expect(canceled.statusCode).toBe(202);
+    const detail = await app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}` });
+    expect(detail.json().session).toMatchObject({ status: "failed", activeTurnId: null });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/permissions/permission-pending/respond",
+      payload: { requestId: "answer-expired", optionId: "allow-once" },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("permission_not_found");
     await app.close();
   });
 
