@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const nonEmpty = z.string().trim().min(1);
+const exactNonEmpty = z.string().refine((value) => value.trim().length > 0, 'Must not be empty or whitespace-only');
 export const sessionStatusSchema = z.enum([
   'creating', 'idle', 'running', 'waiting_permission', 'waiting_input', 'stopping',
   'disconnected', 'failed', 'completed', 'closed',
@@ -17,7 +18,7 @@ export const promptRequestSchema = z.object({ requestId: nonEmpty, text: nonEmpt
 export type PromptRequest = z.infer<typeof promptRequestSchema>;
 export const cancelTurnRequestSchema = z.object({ requestId: nonEmpty, turnId: nonEmpty }).strict();
 export type CancelTurnRequest = z.infer<typeof cancelTurnRequestSchema>;
-export const permissionResponseRequestSchema = z.object({ requestId: nonEmpty, permissionId: nonEmpty, optionId: nonEmpty }).strict();
+export const permissionResponseRequestSchema = z.object({ requestId: nonEmpty, permissionId: nonEmpty, optionId: exactNonEmpty }).strict();
 export type PermissionResponseRequest = z.infer<typeof permissionResponseRequestSchema>;
 
 export const sessionSchema = z.object({
@@ -34,9 +35,9 @@ export const messageDeltaPayloadSchema = z.object({ turnId: nonEmpty, text: z.st
 export const toolUpdatedPayloadSchema = z.object({ turnId: nonEmpty, toolCallId: nonEmpty, title: nonEmpty, status: z.enum(['pending', 'running', 'completed', 'failed']) }).strict();
 export const permissionRequestedPayloadSchema = z.object({
   turnId: nonEmpty, permissionId: nonEmpty, title: nonEmpty,
-  options: z.array(z.object({ optionId: nonEmpty, name: nonEmpty, kind: z.string().optional() }).strict()).min(1),
+  options: z.array(z.object({ optionId: exactNonEmpty, name: nonEmpty, kind: z.string().optional() }).passthrough()).min(1),
 }).strict();
-export const permissionResolvedPayloadSchema = z.object({ permissionId: nonEmpty, optionId: nonEmpty }).strict();
+export const permissionResolvedPayloadSchema = z.object({ permissionId: nonEmpty, optionId: exactNonEmpty }).strict();
 export const turnCompletedPayloadSchema = z.object({ turnId: nonEmpty }).strict();
 export const turnFailedPayloadSchema = z.object({ turnId: nonEmpty, message: nonEmpty }).strict();
 export const sessionErrorPayloadSchema = z.object({ message: nonEmpty }).strict();
