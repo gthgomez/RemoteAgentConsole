@@ -4,10 +4,17 @@ import type {
   RuntimeSummary,
   SessionSummary,
 } from "@remote-agent-console/client-sdk";
-import { HostClient, makeRequestId } from "@remote-agent-console/client-sdk";
+import { HostApiError, HostClient, makeRequestId } from "@remote-agent-console/client-sdk";
+import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { IndexedDbCredentialStore } from "./lib/credential-store";
 
-const client = new HostClient({ baseUrl: import.meta.env.VITE_API_BASE_URL ?? "" });
+const authenticationRequiredEvent = "rac-authentication-required";
+const client = new HostClient({
+  baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
+  credentialStore: new IndexedDbCredentialStore(),
+  onAuthenticationRequired: () => window.dispatchEvent(new Event(authenticationRequiredEvent)),
+});
 type Activity = { id: string; kind: string; text: string; status?: string };
 type Permission = Extract<EventEnvelope, { eventType: "permission.requested" }>["payload"];
 const historyKey = "rac-session-history";
@@ -37,10 +44,25 @@ export function App() {
   const [connected, setConnected] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [pairingRequired, setPairingRequired] = useState(false);
+  const [pairingCode, setPairingCode] = useState("");
+  const [deviceName, setDeviceName] = useState("Android phone");
+  const [pairingError, setPairingError] = useState("");
+  const [pairingPending, setPairingPending] = useState(false);
   const [creating, setCreating] = useState(false);
   const applyEventRef = useRef<(event: EventEnvelope) => void>(() => {});
   const permissionDialogRef = useRef<HTMLElement>(null);
   useModalFocus(Boolean(permission), permissionDialogRef);
+
+  useEffect(() => {
+    const showPairing = () => {
+      setPairingRequired(true);
+      setLoading(false);
+      setError("");
+    };
+    window.addEventListener(authenticationRequiredEvent, showPairing);
+    return () => window.removeEventListener(authenticationRequiredEvent, showPairing);
+  }, []);
 
   useEffect(() => {
     Promise.all([client.getProjects(), client.getRuntimes(), client.getSessions()])
@@ -49,9 +71,11 @@ export function App() {
         setRuntimes(r);
         setSessions(s);
       })
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : "Could not reach the host"),
-      )
+      .catch((reason: unknown) => {
+        if (!(reason instanceof HostApiError && reason.status === 401)) {
+          setError(reason instanceof Error ? reason.message : "Could not reach the host");
+        }
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -251,6 +275,71 @@ export function App() {
       setError(reason instanceof Error ? reason.message : "Could not cancel the active turn");
     }
   }
+
+  async function pairDevice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPairingError("");
+    setPairingPending(true);
+    try {
+      await client.pairDevice(pairingCode.trim(), deviceName.trim());
+      window.location.reload();
+    } catch (reason) {
+      setPairingError(reason instanceof Error ? reason.message : "Device pairing failed");
+    } finally {
+      setPairingPending(false);
+    }
+  }
+
+  if (pairingRequired)
+    return (
+      <main className="shell dashboard pairing-page">
+        <header className="topbar">
+          <div className="brand-mark" aria-hidden="true">
+            F
+          </div>
+          <div>
+            <p className="eyebrow">LOCAL WORKSPACE</p>
+            <h1>Fieldwork</h1>
+          </div>
+        </header>
+        <section className="pairing-card" aria-labelledby="pairing-title">
+          <p className="eyebrow">SECURE DEVICE PAIRING</p>
+          <h2 id="pairing-title">Connect this device</h2>
+          <p className="dialog-intro">
+            Enter the one-time code shown by your Remote Agent Console host.
+          </p>
+          <form className="pairing-form" onSubmit={(event) => void pairDevice(event)}>
+            <label htmlFor="pairing-code">Pairing code</label>
+            <input
+              autoComplete="one-time-code"
+              id="pairing-code"
+              inputMode="text"
+              maxLength={9}
+              onChange={(event) => setPairingCode(event.target.value)}
+              required
+              value={pairingCode}
+            />
+            <label htmlFor="device-name">Device name</label>
+            <input
+              autoComplete="off"
+              id="device-name"
+              maxLength={80}
+              onChange={(event) => setDeviceName(event.target.value)}
+              required
+              value={deviceName}
+            />
+            {pairingError && (
+              <p className="error-banner" role="alert">
+                {pairingError}
+              </p>
+            )}
+            <button className="primary" disabled={pairingPending} type="submit">
+              {pairingPending ? "Pairing…" : "Pair device"}
+            </button>
+          </form>
+        </section>
+      </main>
+    );
 
   if (loading)
     return (
