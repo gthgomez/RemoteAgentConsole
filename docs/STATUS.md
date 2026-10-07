@@ -6,9 +6,9 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 
 ## Latest known-green commit
 
-`b2d26ec` — `docs: record Command Code ACP smoke results`
+`7b9cc40` — `docs: update fake slice status and runtime smoke results`
 
-The current integrated branch passed `pnpm verify`, `pnpm --filter @remote-agent-console/web test:e2e`, and `pnpm build` after this commit.
+The integrated code passed `pnpm verify`, `pnpm --filter @remote-agent-console/web test:e2e` (7 tests), and `pnpm build` immediately before this documentation commit.
 
 ## What works today
 
