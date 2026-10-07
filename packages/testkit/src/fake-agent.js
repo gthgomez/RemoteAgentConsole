@@ -13,6 +13,7 @@ const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 const app = acp.agent({ name: 'remote-agent-console-fake', version: '0.1.0' });
 const canceledSessions = new Set();
 let created = false;
+let promptSequence = 0;
 
 app.onRequest('initialize', ({ params }) => ({
   protocolVersion: params.protocolVersion,
@@ -22,6 +23,7 @@ app.onRequest('initialize', ({ params }) => ({
 
 app.onRequest('session/new', () => {
   created = true;
+  promptSequence = 0;
   return {
     sessionId: SESSION_ID,
     modes: { currentModeId: 'normal', availableModes: MODES },
@@ -35,6 +37,7 @@ app.onNotification('session/cancel', ({ params }) => {
 app.onRequest('session/prompt', async ({ params, client, signal }) => {
   if (!created || params.sessionId !== SESSION_ID) throw new Error('Unknown fake session');
   const promptText = params.prompt.filter(part => part.type === 'text').map(part => part.text).join(' ');
+  const turnNumber = ++promptSequence;
   canceledSessions.delete(SESSION_ID);
   await client.notify(acp.methods.client.session.update, {
     sessionId: SESSION_ID,
@@ -46,7 +49,7 @@ app.onRequest('session/prompt', async ({ params, client, signal }) => {
   if (signal.aborted || canceledSessions.has(SESSION_ID)) return { stopReason: 'cancelled' };
 
   const toolCall = {
-    toolCallId: 'fake-status-tool',
+    toolCallId: `fake-status-tool-${turnNumber}`,
     title: 'Read project status',
     name: 'fake_status',
     kind: 'read',
@@ -58,7 +61,7 @@ app.onRequest('session/prompt', async ({ params, client, signal }) => {
     toolCall,
     options: PERMISSION_OPTIONS,
   });
-  if (signal.aborted || canceledSessions.has(SESSION_ID) || permission.outcome !== 'selected' || permission.optionId !== 'allow-once') {
+  if (signal.aborted || canceledSessions.has(SESSION_ID) || permission.outcome.outcome !== 'selected' || permission.outcome.optionId !== 'allow-once') {
     await client.notify(acp.methods.client.session.update, {
       sessionId: SESSION_ID,
       update: { sessionUpdate: 'tool_call_update', toolCallId: toolCall.toolCallId, status: 'failed' },
