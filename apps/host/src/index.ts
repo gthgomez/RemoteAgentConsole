@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ServerResponse } from "node:http";
 import { extname } from "node:path";
 import fastifyStatic from "@fastify/static";
 import type { EventEnvelope, SessionSummary } from "@remote-agent-console/contracts";
@@ -54,6 +55,8 @@ export interface HostAppOptions {
   authFailureRateLimit?: { limit: number; windowMs: number };
   mutationRateLimit?: { limit: number; windowMs: number };
   sseConnectionLimits?: { global: number; perDevice: number };
+  /** Override the response writer for transport tests; production uses ServerResponse.write. */
+  sseWrite?: (response: ServerResponse, chunk: string) => boolean;
   webRoot?: string;
   makeId?: (kind: "session" | "turn" | "event") => string;
 }
@@ -717,10 +720,23 @@ export function createHostApp(options: HostAppOptions): FastifyInstance {
         });
         reply.raw.flushHeaders();
         const writeEvent = (event: EventEnvelope) => {
-          reply.raw.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
+          const accepted = options.sseWrite
+            ? options.sseWrite(
+                reply.raw,
+                `id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`,
+              )
+            : reply.raw.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
+          if (accepted) return true;
+          // The frame was accepted into Node's bounded buffer, but the socket is not keeping
+          // up. Disconnect and rely on Last-Event-ID replay instead of buffering unboundedly.
+          release();
+          reply.raw.destroy();
+          return false;
         };
         subscription = store.subscribe(sessionId, afterSequence, writeEvent);
-        for (const event of subscription.replay) writeEvent(event);
+        for (const event of subscription.replay) {
+          if (!writeEvent(event)) break;
+        }
       } catch (error) {
         release();
         reply.raw.destroy(error instanceof Error ? error : undefined);
