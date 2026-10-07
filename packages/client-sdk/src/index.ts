@@ -178,11 +178,21 @@ export class HostClient {
     let historyRecoveries = 0;
     const maxHistoryRecoveries = 3;
     const reconnectDelayMs = 750;
+    const maxReconnectDelayMs = 30_000;
+    const maxRetryAfterMs = 60_000;
+    let transientFailures = 0;
+
+    const nextBackoff = () => {
+      const delay = Math.min(reconnectDelayMs * 2 ** transientFailures, maxReconnectDelayMs);
+      transientFailures += 1;
+      return delay;
+    };
 
     const connect = async () => {
       while (!stopped && !halted) {
         const headers = new Headers({ Accept: "text/event-stream" });
         if (lastEventId !== null) headers.set("Last-Event-ID", lastEventId);
+        let retryDelayMs = reconnectDelayMs;
         try {
           const credential = (await this.credentialStore?.get()) ?? null;
           if (credential) headers.set("Authorization", `Bearer ${credential}`);
@@ -210,8 +220,17 @@ export class HostClient {
             }
             lastEventId = String(oldestSequence - 1);
             historyRecoveries += 1;
+          } else if (response.status === 429) {
+            retryDelayMs =
+              parseRetryAfter(response.headers.get("Retry-After"), Date.now(), maxRetryAfterMs) ??
+              nextBackoff();
+          } else if (response.status >= 400 && response.status < 500) {
+            halted = true;
+            handlers.onReconnect();
+            return;
           } else {
             if (!response.ok || !response.body) throw new Error("Event stream unavailable");
+            transientFailures = 0;
             handlers.onOpen?.();
             await readEventStream(response.body, controller.signal, (id, data) => {
               if (id) lastEventId = id;
@@ -227,9 +246,10 @@ export class HostClient {
           if (!stopped) handlers.onReconnect();
         } catch {
           if (stopped) return;
+          retryDelayMs = nextBackoff();
           handlers.onReconnect();
         }
-        if (!stopped) await new Promise((resolve) => setTimeout(resolve, reconnectDelayMs));
+        if (!stopped) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
     };
 
@@ -295,6 +315,23 @@ export class HostClient {
     }
     this.onAuthenticationRequired?.(error);
   }
+}
+
+function parseRetryAfter(
+  value: string | null,
+  nowMs: number,
+  maximumMs: number,
+): number | undefined {
+  if (value === null) return undefined;
+  const trimmed = value.trim();
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (Number.isFinite(seconds)) return Math.min(seconds * 1_000, maximumMs);
+    return undefined;
+  }
+  const timestamp = Date.parse(trimmed);
+  if (!Number.isFinite(timestamp)) return undefined;
+  return Math.min(Math.max(timestamp - nowMs, 0), maximumMs);
 }
 
 async function readEventStream(
