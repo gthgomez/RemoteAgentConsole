@@ -17,7 +17,6 @@ export interface SessionSummary extends Session {
 }
 
 export interface SessionCreated extends Session {}
-export type CreateSessionInput = CreateSessionRequest & { requestId: string };
 
 export class HostApiError extends Error {
   constructor(
@@ -72,7 +71,7 @@ export class HostClient {
     });
   }
 
-  async createSession(input: CreateSessionInput): Promise<SessionCreated> {
+  async createSession(input: CreateSessionRequest): Promise<SessionCreated> {
     const value = await this.request<{ session: unknown }>("/api/v1/sessions", {
       method: "POST",
       body: JSON.stringify(input),
