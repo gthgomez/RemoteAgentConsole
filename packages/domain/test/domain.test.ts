@@ -26,14 +26,15 @@ describe("session domain", () => {
     const active = beginTurn(session, { id: "t1", prompt: "hello" });
     expect(() => beginTurn(active, { id: "t2", prompt: "again" })).toThrow(/active turn/i);
   });
-  it("does not restart completed sessions", () => {
+  it("returns to idle after a completed turn and accepts the next turn", () => {
     const idle = transitionSession(
       createSession({ id: "s2", machineId: "m1", projectId: "p1", runtimeId: "fake" }),
       "idle",
     );
     const completed = setTurnStatus(beginTurn(idle, { id: "t1", prompt: "hello" }), "completed");
     expect(completed.activeTurn).toBeNull();
-    expect(() => beginTurn(completed, { id: "t2", prompt: "again" })).toThrow(/Cannot start turn/);
+    expect(completed.status).toBe("idle");
+    expect(beginTurn(completed, { id: "t2", prompt: "again" }).status).toBe("running");
   });
   it("routes turn updates through legal session transitions", () => {
     const idle = transitionSession(

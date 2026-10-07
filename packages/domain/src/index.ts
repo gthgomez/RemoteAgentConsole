@@ -137,9 +137,7 @@ export function setTurnStatus(
         ? "running"
         : status === "failed"
           ? "failed"
-          : status === "completed"
-            ? "completed"
-            : "idle";
+          : "idle";
   const transitioned = transitionSession(session, nextSessionStatus, now);
   return {
     ...transitioned,
