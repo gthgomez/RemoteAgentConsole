@@ -1,0 +1,6 @@
+{
+  "extends": "//",
+  "files": {
+    "includes": ["**", "!dist", "!test-results", "!playwright-report", "!tsconfig.tsbuildinfo"]
+  }
+}
