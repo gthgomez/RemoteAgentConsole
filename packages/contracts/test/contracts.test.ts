@@ -89,7 +89,11 @@ describe("contracts", () => {
   });
   it("validates session and prompt requests", () => {
     expect(
-      createSessionRequestSchema.safeParse({ projectId: "project-1", runtimeId: "fake" }).success,
+      createSessionRequestSchema.safeParse({
+        requestId: "create-1",
+        projectId: "project-1",
+        runtimeId: "fake",
+      }).success,
     ).toBe(true);
     expect(promptRequestSchema.safeParse({ requestId: "req-1", text: "hello" }).success).toBe(true);
     expect(promptRequestSchema.safeParse({ requestId: "", text: "" }).success).toBe(false);
