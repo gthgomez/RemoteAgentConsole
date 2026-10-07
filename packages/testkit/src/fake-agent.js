@@ -39,6 +39,10 @@ app.onRequest("session/prompt", async ({ params, client, signal }) => {
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join(" ");
+  if (promptText.trim().toLowerCase() === "crash") {
+    process.stderr.write("Fake ACP crash scenario triggered\n");
+    process.exit(42);
+  }
   const turnNumber = ++promptSequence;
   canceledSessions.delete(SESSION_ID);
   await client.notify(acp.methods.client.session.update, {
