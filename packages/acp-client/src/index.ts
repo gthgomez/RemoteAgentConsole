@@ -184,6 +184,10 @@ export function createAcpRuntimeAdapter(options: AcpRuntimeOptions): RuntimeAdap
             },
             async cancel() {
               if (!sessionId || ended) return;
+              for (const pending of permissions.values()) {
+                pending.resolve({ outcome: { outcome: "cancelled" } });
+              }
+              permissions.clear();
               await connection.agent.notify(acp.methods.agent.session.cancel, { sessionId });
             },
             async resolvePermission(permissionId, optionId) {
@@ -223,7 +227,11 @@ function projectCapabilities(
 ): RuntimeCapabilities {
   return {
     ...noCapabilities,
-    sessions: { create: true, resume: Boolean(agent.loadSession), list: false },
+    sessions: {
+      create: true,
+      resume: Boolean(agent.sessionCapabilities?.resume ?? agent.loadSession),
+      list: Boolean(agent.sessionCapabilities?.list),
+    },
     modes: false,
     images: Boolean(agent.promptCapabilities?.image),
   };

@@ -60,6 +60,20 @@ describe("ACP runtime adapter", () => {
     await canceled;
   });
 
+  it("answers a pending permission as cancelled when cancelling the turn", async () => {
+    const connection = await adapter().connect({ projectId: "demo" });
+    const session = await connection.createSession();
+    sessions.push(session);
+    const canceled = new Promise<void>((resolve) => {
+      session.subscribe((event) => {
+        if (event.type === "permission.requested") void session.cancel();
+        if (event.type === "turn.failed" && event.message === "Turn cancelled") resolve();
+      });
+    });
+    await session.prompt("cancel while permission is pending");
+    await canceled;
+  });
+
   it("rejects connection setup when the child exits before ACP initialization", async () => {
     const failed = createAcpRuntimeAdapter({
       id: "crash",
@@ -77,6 +91,7 @@ describe("ACP runtime adapter", () => {
         projectId: "demo",
       },
     );
+    expect(connection.capabilities.sessions).toEqual({ create: true, resume: true, list: true });
     const session = await connection.createSession();
     sessions.push(session);
     const failed = new Promise<void>((resolve) => {
