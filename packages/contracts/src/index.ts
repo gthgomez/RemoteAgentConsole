@@ -49,6 +49,36 @@ export const sessionSchema = z
   .strict();
 export type Session = z.infer<typeof sessionSchema>;
 
+export const projectSummarySchema = z.object({ id: nonEmpty, displayName: nonEmpty }).strict();
+export type ProjectSummary = z.infer<typeof projectSummarySchema>;
+
+export const runtimeCapabilitiesSchema = z
+  .object({
+    sessions: z.object({ create: z.boolean(), resume: z.boolean(), list: z.boolean() }).strict(),
+    interaction: z
+      .object({ cancel: z.boolean(), permissions: z.boolean(), questions: z.boolean() })
+      .strict(),
+    models: z.object({ selectable: z.boolean(), effort: z.boolean() }).strict(),
+    modes: z.boolean(),
+    plans: z.boolean(),
+    commands: z.boolean(),
+    images: z.boolean(),
+    files: z.boolean(),
+  })
+  .strict();
+export type RuntimeCapabilities = z.infer<typeof runtimeCapabilitiesSchema>;
+
+export const runtimeSummarySchema = z
+  .object({
+    id: nonEmpty,
+    displayName: nonEmpty,
+    installed: z.boolean(),
+    version: nonEmpty.optional(),
+    capabilities: runtimeCapabilitiesSchema.nullable(),
+  })
+  .strict();
+export type RuntimeSummary = z.infer<typeof runtimeSummarySchema>;
+
 export const sessionCreatedPayloadSchema = z
   .object({ projectId: nonEmpty, runtimeId: nonEmpty })
   .strict();
