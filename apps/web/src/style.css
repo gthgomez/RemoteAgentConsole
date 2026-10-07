@@ -703,3 +703,44 @@ select:focus-visible {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.pairing-card {
+  margin-top: 30px;
+  padding: 23px 20px;
+  border: 1px solid #344236;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #1a261e, #141d17);
+}
+.pairing-card h2 {
+  font: 700 28px var(--display);
+  letter-spacing: -0.05em;
+  margin: 6px 0 8px;
+}
+.pairing-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 23px;
+}
+.pairing-form label {
+  color: #c7d1c3;
+  font-size: 13px;
+  font-weight: 600;
+}
+.pairing-form input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #455244;
+  border-radius: 11px;
+  padding: 0 13px;
+  background: #101712;
+  color: var(--paper);
+  font: 500 16px var(--mono);
+}
+.pairing-form input:focus-visible {
+  outline: 3px solid #c6f36b;
+  outline-offset: 3px;
+}
+.pairing-form .primary {
+  margin-top: 6px;
+  width: 100%;
+}
