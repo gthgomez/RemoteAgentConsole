@@ -20,6 +20,7 @@ export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 
 export const createSessionRequestSchema = z
   .object({
+    requestId: nonEmpty,
     projectId: nonEmpty,
     runtimeId: nonEmpty,
   })
@@ -48,6 +49,26 @@ export const sessionSchema = z
   })
   .strict();
 export type Session = z.infer<typeof sessionSchema>;
+
+export type SessionSummary = Session;
+
+export const sessionsResponseSchema = z.object({ sessions: z.array(sessionSchema) }).strict();
+export const sessionResponseSchema = z.object({ session: sessionSchema }).strict();
+export const promptAcceptedResponseSchema = z
+  .object({ accepted: z.literal(true), requestId: nonEmpty, turnId: nonEmpty })
+  .strict();
+export const cancelAcceptedResponseSchema = z
+  .object({ accepted: z.literal(true), requestId: nonEmpty, turnId: nonEmpty })
+  .strict();
+export const permissionAcceptedResponseSchema = z
+  .object({
+    accepted: z.literal(true),
+    requestId: nonEmpty,
+    permissionId: nonEmpty,
+    optionId: exactNonEmpty,
+  })
+  .strict();
+export const healthResponseSchema = z.object({ status: z.literal("ok") }).strict();
 
 export const projectSummarySchema = z.object({ id: nonEmpty, displayName: nonEmpty }).strict();
 export type ProjectSummary = z.infer<typeof projectSummarySchema>;
@@ -89,6 +110,13 @@ export const runtimeSummarySchema = z.discriminatedUnion("installed", [
     .strict(),
 ]);
 export type RuntimeSummary = z.infer<typeof runtimeSummarySchema>;
+
+export const projectsResponseSchema = z
+  .object({ projects: z.array(projectSummarySchema) })
+  .strict();
+export const runtimesResponseSchema = z
+  .object({ runtimes: z.array(runtimeSummarySchema) })
+  .strict();
 
 export const sessionCreatedPayloadSchema = z
   .object({ projectId: nonEmpty, runtimeId: nonEmpty })
