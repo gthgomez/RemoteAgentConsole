@@ -45,7 +45,9 @@ export interface HostStore {
   replaceProjects(projects: readonly HostProject[]): void;
   createTurn(turn: StoredTurn): void;
   nextSequence(sessionId: string): number;
+  oldestEventSequence(sessionId: string): number | null;
   appendEvent(sessionId: string, event: EventEnvelope): void;
+  getIdempotency(key: string): IdempotencyResult | undefined;
   saveIdempotency(key: string, result: IdempotencyResult): void;
   deleteIdempotency(key: string): void;
   subscribe(
@@ -81,6 +83,10 @@ abstract class BaseHostStore implements HostStore {
     return (this.events.get(sessionId)?.at(-1)?.sequence ?? 0) + 1;
   }
 
+  oldestEventSequence(sessionId: string): number | null {
+    return this.events.get(sessionId)?.[0]?.sequence ?? null;
+  }
+
   appendEvent(sessionId: string, event: EventEnvelope): void {
     if (
       event.eventType === "turn.started" ||
@@ -105,6 +111,10 @@ abstract class BaseHostStore implements HostStore {
 
   saveIdempotency(key: string, result: IdempotencyResult): void {
     this.idempotency.set(key, result);
+  }
+
+  getIdempotency(key: string): IdempotencyResult | undefined {
+    return this.idempotency.get(key);
   }
 
   deleteIdempotency(key: string): void {
@@ -134,14 +144,36 @@ export class InMemoryHostStore extends BaseHostStore {}
 interface SQLiteHostStoreOptions {
   filename: string;
   projects?: readonly HostProject[];
+  /** Completed-session event/transcript replay window. Expired cursors receive HTTP 410. */
+  maxEventsPerSession?: number;
+  /** Idempotency replay lifetime; expired keys can no longer protect against very late retries. */
+  idempotencyRetentionMs?: number;
+}
+
+function positiveInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive safe integer`);
+  }
+  return value;
 }
 
 /** Local durable store. Persisted transcripts remain a remote-control event log, not runtime authority. */
 export class SQLiteHostStore extends BaseHostStore implements AuthStore {
   private readonly database: Database.Database;
+  private readonly maxEventsPerSession: number;
+  private readonly idempotencyRetentionMs: number;
+  private readonly idempotencyCreatedAt = new Map<string, number>();
 
   constructor(options: SQLiteHostStoreOptions) {
     super();
+    this.maxEventsPerSession = positiveInteger(
+      options.maxEventsPerSession ?? 10_000,
+      "maxEventsPerSession",
+    );
+    this.idempotencyRetentionMs = positiveInteger(
+      options.idempotencyRetentionMs ?? 7 * 24 * 60 * 60 * 1000,
+      "idempotencyRetentionMs",
+    );
     this.database = new Database(options.filename);
     this.database.pragma("journal_mode = WAL");
     this.database.pragma("synchronous = FULL");
@@ -175,7 +207,8 @@ export class SQLiteHostStore extends BaseHostStore implements AuthStore {
         request_key TEXT PRIMARY KEY,
         fingerprint TEXT NOT NULL,
         status_code INTEGER NOT NULL,
-        body_json TEXT NOT NULL
+        body_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS permissions (
         permission_id TEXT PRIMARY KEY,
@@ -198,6 +231,8 @@ export class SQLiteHostStore extends BaseHostStore implements AuthStore {
         revoked_at INTEGER
       );
     `);
+    this.ensureIdempotencyTimestampColumn();
+    this.purgeExpiredIdempotency(Date.now());
     this.load();
     if (options.projects) this.replaceProjects(options.projects);
   }
@@ -256,14 +291,18 @@ export class SQLiteHostStore extends BaseHostStore implements AuthStore {
     }
 
     const idempotencyRows = this.database
-      .prepare("SELECT request_key, fingerprint, status_code, body_json FROM idempotency_keys")
+      .prepare(
+        "SELECT request_key, fingerprint, status_code, body_json, created_at FROM idempotency_keys",
+      )
       .all() as Array<{
       request_key: string;
       fingerprint: string;
       status_code: number;
       body_json: string;
+      created_at: number;
     }>;
     for (const row of idempotencyRows) {
+      this.idempotencyCreatedAt.set(row.request_key, row.created_at);
       this.idempotency.set(row.request_key, {
         fingerprint: row.fingerprint,
         statusCode: row.status_code,
@@ -315,12 +354,20 @@ export class SQLiteHostStore extends BaseHostStore implements AuthStore {
     return row.next_sequence;
   }
 
+  override oldestEventSequence(sessionId: string): number | null {
+    const row = this.database
+      .prepare("SELECT MIN(sequence) AS oldest_sequence FROM events WHERE session_id = ?")
+      .get(sessionId) as { oldest_sequence: number | null };
+    return row.oldest_sequence;
+  }
+
   override appendEvent(sessionId: string, event: EventEnvelope): void {
     const expectedSequence = this.nextSequence(sessionId);
     if (event.sequence !== expectedSequence) {
       throw new Error(`Event sequence must be ${expectedSequence} for session ${sessionId}`);
     }
     const storedSession = this.sessions.get(sessionId);
+    let prunedThrough = 0;
     const transaction = this.database.transaction(() => {
       this.database
         .prepare("INSERT INTO events(session_id, sequence, event_json) VALUES (?, ?, ?)")
@@ -366,27 +413,117 @@ export class SQLiteHostStore extends BaseHostStore implements AuthStore {
           );
         }
       }
+      prunedThrough = this.pruneSessionEvents(sessionId, event);
     });
     transaction();
     super.appendEvent(sessionId, event);
+    if (prunedThrough > 0) {
+      this.events.set(
+        sessionId,
+        (this.events.get(sessionId) ?? []).filter(
+          (storedEvent) => storedEvent.sequence > prunedThrough,
+        ),
+      );
+    }
   }
 
   override saveIdempotency(key: string, result: IdempotencyResult): void {
+    const now = Date.now();
+    this.purgeExpiredIdempotency(now);
     this.database
       .prepare(
-        "INSERT OR REPLACE INTO idempotency_keys(request_key, fingerprint, status_code, body_json) VALUES (?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO idempotency_keys(request_key, fingerprint, status_code, body_json, created_at) VALUES (?, ?, ?, ?, ?)",
       )
-      .run(key, result.fingerprint, result.statusCode, JSON.stringify(result.body));
+      .run(key, result.fingerprint, result.statusCode, JSON.stringify(result.body), now);
+    this.idempotencyCreatedAt.set(key, now);
     super.saveIdempotency(key, result);
+  }
+
+  override getIdempotency(key: string): IdempotencyResult | undefined {
+    const createdAt = this.idempotencyCreatedAt.get(key);
+    if (createdAt !== undefined && createdAt <= Date.now() - this.idempotencyRetentionMs) {
+      this.deleteIdempotency(key);
+      return undefined;
+    }
+    return super.getIdempotency(key);
   }
 
   override deleteIdempotency(key: string): void {
     this.database.prepare("DELETE FROM idempotency_keys WHERE request_key = ?").run(key);
+    this.idempotencyCreatedAt.delete(key);
     super.deleteIdempotency(key);
   }
 
   override close(): void {
     this.database.close();
+  }
+
+  private ensureIdempotencyTimestampColumn(): void {
+    const columns = this.database.prepare("PRAGMA table_info(idempotency_keys)").all() as Array<{
+      name: string;
+    }>;
+    if (!columns.some((column) => column.name === "created_at")) {
+      // Existing keys start their retention window at migration time, avoiding surprise mass expiry.
+      this.database.exec(
+        "ALTER TABLE idempotency_keys ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0",
+      );
+      this.database
+        .prepare("UPDATE idempotency_keys SET created_at = ? WHERE created_at = 0")
+        .run(Date.now());
+    }
+  }
+
+  private purgeExpiredIdempotency(now: number): void {
+    const cutoff = now - this.idempotencyRetentionMs;
+    this.database.prepare("DELETE FROM idempotency_keys WHERE created_at <= ?").run(cutoff);
+    for (const [key, createdAt] of this.idempotencyCreatedAt) {
+      if (createdAt <= cutoff) {
+        this.idempotencyCreatedAt.delete(key);
+        this.idempotency.delete(key);
+      }
+    }
+  }
+
+  private pruneSessionEvents(sessionId: string, incoming: EventEnvelope): number {
+    const stream = [...(this.events.get(sessionId) ?? []), incoming];
+    const stored = this.sessions.get(sessionId);
+    const activeTurnId = stored?.summary.activeTurnId ?? null;
+    const pendingPermissionIds = new Set(
+      [...this.permissions]
+        .filter(([, permission]) => permission.sessionId === sessionId && !permission.resolved)
+        .map(([permissionId]) => permissionId),
+    );
+    const protectedSequences: number[] = [];
+    if (activeTurnId) {
+      const turnStart = stream.find(
+        (event) => event.eventType === "turn.started" && event.payload.turnId === activeTurnId,
+      );
+      // If the active turn's beginning is unknown, retain its whole stream rather than lose context.
+      if (!turnStart) return 0;
+      protectedSequences.push(turnStart.sequence);
+    }
+    for (const permissionId of pendingPermissionIds) {
+      const request = stream.find(
+        (event) =>
+          event.eventType === "permission.requested" && event.payload.permissionId === permissionId,
+      );
+      // An unresolved request with no matching event is inconsistent state; retain all history.
+      if (!request) return 0;
+      protectedSequences.push(request.sequence);
+    }
+    const oldestProtected = protectedSequences.length ? Math.min(...protectedSequences) : null;
+    const excess = stream.length - this.maxEventsPerSession;
+    if (excess <= 0) return 0;
+
+    // Old event payloads are discarded beyond this replay window. Protected active work may exceed
+    // the limit by design; the session and turn records themselves are never removed here.
+    let removeThrough = stream[excess - 1]?.sequence ?? 0;
+    if (oldestProtected !== null) removeThrough = Math.min(removeThrough, oldestProtected - 1);
+    if (removeThrough <= 0) return 0;
+    this.database
+      .prepare("DELETE FROM events WHERE session_id = ? AND sequence <= ?")
+      .run(sessionId, removeThrough);
+    return removeThrough;
   }
 
   putPairing(record: PairingRecord): void {

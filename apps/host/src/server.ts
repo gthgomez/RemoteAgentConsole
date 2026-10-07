@@ -44,6 +44,14 @@ const projects = await canonicalizeConfiguredProjects(readProjects(process.env.R
 const databasePath =
   process.env.RAC_HOST_DATABASE_PATH ??
   join(process.env.LOCALAPPDATA ?? homedir(), ".remote-agent-console", "host.sqlite");
+function positiveIntegerSetting(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) < 1) {
+    throw new Error(`${name} must be a positive safe integer`);
+  }
+  return Number(value);
+}
 const configuredWebRoot = process.env.RAC_WEB_DIST_PATH;
 const webRoot = configuredWebRoot ?? fileURLToPath(new URL("../../web/dist/", import.meta.url));
 if (configuredWebRoot && !existsSync(configuredWebRoot)) {
@@ -53,7 +61,15 @@ if (!existsSync(webRoot)) {
   console.warn("PWA build not found; run pnpm build to serve the web app from this host");
 }
 mkdirSync(dirname(databasePath), { recursive: true });
-const store = new SQLiteHostStore({ filename: databasePath, projects });
+const store = new SQLiteHostStore({
+  filename: databasePath,
+  projects,
+  maxEventsPerSession: positiveIntegerSetting("RAC_EVENT_HISTORY_LIMIT", 10_000),
+  idempotencyRetentionMs: positiveIntegerSetting(
+    "RAC_IDEMPOTENCY_RETENTION_MS",
+    7 * 24 * 60 * 60 * 1000,
+  ),
+});
 const pairingAuth = new PairingAuthService(store);
 const pairing = pairingAuth.issuePairingCode();
 console.info(

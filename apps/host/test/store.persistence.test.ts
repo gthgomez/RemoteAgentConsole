@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostApp } from "../src/index.js";
 import type { RuntimeSupervisorPort } from "../src/ports.js";
@@ -20,6 +21,183 @@ afterEach(() => {
 });
 
 describe("SQLiteHostStore", () => {
+  it("retains only the configured replay window for completed sessions", () => {
+    const store = new SQLiteHostStore({ filename: databasePath(), maxEventsPerSession: 2 });
+    store.sessions.set("session-1", {
+      summary: {
+        id: "session-1",
+        machineId: "machine-1",
+        projectId: "project-1",
+        runtimeId: "fake",
+        status: "idle",
+        createdAt: "2026-10-07T00:00:00.000Z",
+        updatedAt: "2026-10-07T00:00:00.000Z",
+        activeTurnId: null,
+      },
+      runtimeSession: null,
+    });
+    for (let sequence = 1; sequence <= 3; sequence++) {
+      store.appendEvent("session-1", {
+        eventId: `event-${sequence}`,
+        sequence,
+        machineId: "machine-1",
+        sessionId: "session-1",
+        timestamp: "2026-10-07T00:00:00.000Z",
+        eventType: "session.status_changed",
+        payload: { status: "idle" },
+      });
+    }
+
+    expect(store.events.get("session-1")?.map((event) => event.sequence)).toEqual([2, 3]);
+    expect(store.nextSequence("session-1")).toBe(4);
+    store.close();
+  });
+
+  it("keeps active turn and unresolved permission events outside the completed-session replay cap", () => {
+    const store = new SQLiteHostStore({ filename: databasePath(), maxEventsPerSession: 1 });
+    store.sessions.set("session-1", {
+      summary: {
+        id: "session-1",
+        machineId: "machine-1",
+        projectId: "project-1",
+        runtimeId: "fake",
+        status: "waiting_permission",
+        createdAt: "2026-10-07T00:00:00.000Z",
+        updatedAt: "2026-10-07T00:00:00.000Z",
+        activeTurnId: "turn-1",
+      },
+      runtimeSession: null,
+    });
+    store.createTurn({
+      id: "turn-1",
+      sessionId: "session-1",
+      prompt: "keep this active turn",
+      status: "running",
+      createdAt: "2026-10-07T00:00:00.000Z",
+    });
+    store.permissions.set("permission-1", {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      options: [{ optionId: "allow" }],
+      resolved: false,
+    });
+    store.appendEvent("session-1", {
+      eventId: "event-1",
+      sequence: 1,
+      machineId: "machine-1",
+      sessionId: "session-1",
+      timestamp: "2026-10-07T00:00:00.000Z",
+      eventType: "turn.started",
+      payload: { turnId: "turn-1" },
+    });
+    store.appendEvent("session-1", {
+      eventId: "event-2",
+      sequence: 2,
+      machineId: "machine-1",
+      sessionId: "session-1",
+      timestamp: "2026-10-07T00:00:00.000Z",
+      eventType: "permission.requested",
+      payload: {
+        turnId: "turn-1",
+        permissionId: "permission-1",
+        title: "Run command",
+        options: [{ optionId: "allow", name: "Allow" }],
+      },
+    });
+
+    expect(store.events.get("session-1")?.map((event) => event.sequence)).toEqual([1, 2]);
+    expect(store.permissions.get("permission-1")?.resolved).toBe(false);
+    store.close();
+  });
+
+  it("reports an expired SSE cursor instead of silently replaying a partial transcript", async () => {
+    const store = new SQLiteHostStore({ filename: databasePath(), maxEventsPerSession: 1 });
+    store.sessions.set("session-1", {
+      summary: {
+        id: "session-1",
+        machineId: "machine-1",
+        projectId: "project-1",
+        runtimeId: "fake",
+        status: "idle",
+        createdAt: "2026-10-07T00:00:00.000Z",
+        updatedAt: "2026-10-07T00:00:00.000Z",
+        activeTurnId: null,
+      },
+      runtimeSession: null,
+    });
+    for (let sequence = 1; sequence <= 2; sequence++) {
+      store.appendEvent("session-1", {
+        eventId: `event-${sequence}`,
+        sequence,
+        machineId: "machine-1",
+        sessionId: "session-1",
+        timestamp: "2026-10-07T00:00:00.000Z",
+        eventType: "session.status_changed",
+        payload: { status: "idle" },
+      });
+    }
+    const app = createHostApp({
+      machineId: "machine-1",
+      projects: [],
+      supervisor: {
+        runtimes: async () => [],
+        createSession: async () => {
+          throw new Error("unused");
+        },
+      },
+      store,
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/sessions/session-1/events",
+      headers: { "last-event-id": "0" },
+    });
+
+    expect(response.statusCode).toBe(410);
+    expect(response.json()).toMatchObject({
+      error: { code: "event_history_expired" },
+    });
+    await app.close();
+  });
+
+  it("expires idempotency records after the configured retry window", async () => {
+    const filename = databasePath();
+    const store = new SQLiteHostStore({ filename, idempotencyRetentionMs: 20 });
+    store.saveIdempotency("old", { fingerprint: "old", statusCode: 202, body: { ok: true } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(store.getIdempotency("old")).toBeUndefined();
+    store.saveIdempotency("new", { fingerprint: "new", statusCode: 202, body: { ok: true } });
+
+    expect(store.idempotency.has("old")).toBe(false);
+    expect(store.idempotency.has("new")).toBe(true);
+    store.close();
+  });
+
+  it("migrates existing idempotency rows without expiring them immediately", () => {
+    const filename = databasePath();
+    const legacy = new Database(filename);
+    legacy.exec(`
+      CREATE TABLE idempotency_keys (
+        request_key TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        status_code INTEGER NOT NULL,
+        body_json TEXT NOT NULL
+      );
+      INSERT INTO idempotency_keys VALUES ('legacy', 'fingerprint', 202, '{"accepted":true}');
+    `);
+    legacy.close();
+
+    const store = new SQLiteHostStore({ filename, idempotencyRetentionMs: 60_000 });
+
+    expect(store.idempotency.get("legacy")).toMatchObject({
+      fingerprint: "fingerprint",
+      statusCode: 202,
+      body: { accepted: true },
+    });
+    store.close();
+  });
+
   it("persists projects, sessions, turns, events, sequence numbers, and idempotency results", () => {
     const filename = databasePath();
     const project = { id: "project-1", displayName: "Demo", path: "/private/demo" };
