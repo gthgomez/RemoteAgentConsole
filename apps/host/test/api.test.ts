@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createHostApp,
+  InMemoryHostStore,
   type RuntimeSessionPort,
   type RuntimeSupervisorPort,
 } from "../src/index.js";
@@ -15,6 +16,8 @@ function harness() {
     permissions: [] as Array<{ permissionId: string; optionId: string }>,
   };
   let sessionNumber = 0;
+  let emitRuntimeEvent: ((event: unknown) => void) | undefined;
+  const store = new InMemoryHostStore();
   const supervisor: RuntimeSupervisorPort = {
     runtimes: () => [
       {
@@ -36,6 +39,7 @@ function harness() {
     ],
     createSession: vi.fn(async ({ sessionId, onEvent }): Promise<RuntimeSessionPort> => {
       callbacks.set(sessionId, onEvent);
+      emitRuntimeEvent = onEvent;
       return {
         prompt: async (turnId, text) => {
           calls.prompts.push({ turnId, text });
@@ -45,6 +49,10 @@ function harness() {
         },
         respondPermission: async (permissionId, optionId) => {
           calls.permissions.push({ permissionId, optionId });
+          emitRuntimeEvent?.({
+            eventType: "permission.resolved",
+            payload: { permissionId, optionId },
+          });
         },
       };
     }),
@@ -53,9 +61,10 @@ function harness() {
     machineId: "machine-1",
     projects: [project],
     supervisor,
+    store,
     makeId: (kind) => `${kind}-${++sessionNumber}`,
   });
-  return { app, callbacks, calls, supervisor };
+  return { app, callbacks, calls, supervisor, store };
 }
 
 describe("host API", () => {
@@ -150,7 +159,7 @@ describe("host API", () => {
   });
 
   it("responds only with an exact stored permission option and supports cancellation", async () => {
-    const { app, callbacks, calls } = harness();
+    const { app, callbacks, calls, store } = harness();
     const session = await app.inject({
       method: "POST",
       url: "/api/v1/sessions",
@@ -185,6 +194,9 @@ describe("host API", () => {
       payload: { requestId: "answer-1", optionId: "allow-once" },
     });
     expect(good.statusCode).toBe(200);
+    expect(
+      store.events.get(id)?.filter((event) => event.eventType === "permission.resolved"),
+    ).toHaveLength(1);
     expect(calls.permissions).toEqual([{ permissionId: "permission-1", optionId: "allow-once" }]);
     const retry = await app.inject({
       method: "POST",
