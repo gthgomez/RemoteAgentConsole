@@ -12,6 +12,21 @@ OpenCode's current ACP documentation describes `opencode acp` as an ACP v1 subpr
 
 ## Compatibility status
 
-**Discovery confirmed; live runtime compatibility not yet verified.** The installed executable was version-checked, but `opencode acp` was not launched for an initialize/session/prompt workflow in this environment. The adapter's automated tests use a fake executable that forwards to the deterministic ACP test agent; they verify process arguments, project cwd, stdio transport, and normalized text events. They do not establish OpenCode's live runtime behavior, authentication, model availability, or permission semantics on this machine.
+**Live ACP initialize and session creation confirmed; prompt behavior not verified.** On 2026-10-07, the adapter launched the installed `opencode v2.0.24` executable with `opencode acp`, initialized ACP, and completed `session/new` with cwd `/home/linuxuser/RemoteAgentConsole/.worktrees/opencode-adapter`. The session and connection returned the same `RuntimeCapabilities`:
 
-The discovery summary advertises only capabilities available through this generic adapter path: session creation, cancellation, and permission requests. Session resume/list, model selection, modes, commands, images, and files remain unexposed by the current runtime-neutral session interface even where OpenCode ACP itself supports related protocol features.
+```json
+{
+  "sessions": { "create": true, "resume": true, "list": true },
+  "interaction": { "cancel": true, "permissions": true, "questions": false },
+  "models": { "selectable": false, "effort": false },
+  "modes": false,
+  "plans": false,
+  "commands": false,
+  "images": true,
+  "files": false
+}
+```
+
+The smoke test closed the session immediately and sent no prompt, so it did not invoke a model or establish authentication, model availability, prompt streaming, or live permission behavior. The automated tests still use a fake executable forwarding to the deterministic ACP test agent; they verify process arguments, project cwd, stdio transport, and normalized text events.
+
+The discovery summary intentionally advertises only capabilities currently exposed through the generic adapter path: session creation, cancellation, and permission requests. Live ACP additionally reported resume/list and image support; the current runtime-neutral session interface does not expose those features. Model selection, modes, commands, and files were not reported in this live capability response.
