@@ -63,6 +63,22 @@ describe("contracts", () => {
     ).toBe(true);
     expect(
       runtimeSummarySchema.safeParse({
+        id: "missing",
+        displayName: "Missing runtime",
+        installed: false,
+        capabilities,
+      }).success,
+    ).toBe(false);
+    expect(
+      runtimeSummarySchema.safeParse({
+        id: "fake",
+        displayName: "Fake ACP",
+        installed: true,
+        capabilities: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      runtimeSummarySchema.safeParse({
         id: "fake",
         displayName: "Fake ACP",
         installed: true,
