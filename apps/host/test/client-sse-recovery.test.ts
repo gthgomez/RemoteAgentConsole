@@ -9,6 +9,59 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("HostClient event history recovery", () => {
+  it("stops reconnecting on permanent client errors", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async () => jsonResponse(404, { error: { code: "NOT_FOUND" } }));
+      const onReconnect = vi.fn();
+      const client = new HostClient({ fetch: fetcher as unknown as typeof fetch });
+      const stop = client.subscribe("session-1", { onEvent: () => {}, onReconnect });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(onReconnect).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses a bounded Retry-After delay for rate-limited streams", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: { code: "RATE_LIMITED" } }), {
+            status: 429,
+            headers: { "content-type": "application/json", "retry-after": "2" },
+          }),
+        )
+        .mockResolvedValue(new Response(null, { status: 404 }));
+      const onReconnect = vi.fn();
+      const client = new HostClient({ fetch: fetcher as typeof fetch });
+      const stop = client.subscribe("session-1", { onEvent: () => {}, onReconnect });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(onReconnect).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restarts from the oldest retained event after a valid 410", async () => {
     const requests: Array<string | null> = [];
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
