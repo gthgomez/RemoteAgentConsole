@@ -13,7 +13,7 @@ import {
 } from "@remote-agent-console/contracts";
 
 export interface SessionSummary extends Session {
-  projectDisplayName: string;
+  projectDisplayName?: string;
 }
 
 export interface SessionCreated extends Session {}
@@ -62,15 +62,13 @@ export class HostClient {
     if (!Array.isArray(value.sessions))
       throw new TypeError("Host returned an invalid session list");
     return value.sessions.map((item: unknown) => {
-      if (
-        !item ||
-        typeof item !== "object" ||
-        !("projectDisplayName" in item) ||
-        typeof item.projectDisplayName !== "string"
-      ) {
-        throw new TypeError("Host returned a session without a project display name");
-      }
-      return { ...sessionSchema.parse(item), projectDisplayName: item.projectDisplayName };
+      if (!item || typeof item !== "object")
+        throw new TypeError("Host returned an invalid session");
+      const { projectDisplayName, ...session } = item as Record<string, unknown>;
+      return {
+        ...sessionSchema.parse(session),
+        ...(typeof projectDisplayName === "string" ? { projectDisplayName } : {}),
+      };
     });
   }
 

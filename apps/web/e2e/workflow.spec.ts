@@ -53,7 +53,6 @@ test("creates a session, streams activity, responds to permission, and restores 
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString(),
                   activeTurnId: null,
-                  projectDisplayName: "Field Notes",
                 },
               ]
             : [],
@@ -191,15 +190,26 @@ test("creates a session, streams activity, responds to permission, and restores 
   await page.getByLabel("Project").selectOption("project-1");
   await page.getByLabel("Runtime").selectOption("runtime-a");
   await page.getByRole("button", { name: "Create session" }).click();
-  await page.getByLabel("Message the agent").fill("Review this project");
+  const composer = page.getByLabel("Message the agent");
+  await composer.click();
+  await composer.pressSequentially("Review this project");
+  await expect(composer).toHaveValue("Review this project");
+  await expect(composer).toBeFocused();
   await page.getByRole("button", { name: "Send prompt" }).click();
   await expect(page.getByText("I will inspect the project.")).toBeVisible();
   await expect(page.getByText("Read project files")).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Permission request" })).toBeVisible();
-  await page.getByRole("button", { name: "Allow once" }).click();
+  await expect(page.getByRole("dialog", { name: "Allow file changes?" })).toBeVisible();
+  const allowOnce = page.getByRole("button", { name: "Allow once" });
+  await expect(allowOnce).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: "Deny" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(allowOnce).toBeFocused();
+  await allowOnce.click();
   await expect(page.getByText("Turn completed")).toBeVisible();
   await page.reload();
   await expect(page.getByText("Review this project")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
   expect(events.length).toBeGreaterThan(0);
 });
 
