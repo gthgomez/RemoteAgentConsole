@@ -26,7 +26,7 @@ The repository foundation and deterministic fake ACP vertical slice are complete
 fake ACP child process -> host ACP client -> normalized events -> REST/SSE -> React PWA
 ```
 
-Production static serving, pairing, durable storage, authenticated REST/SSE, and the installable PWA are implemented. The remaining MVP work is verifying Command Code and OpenCode prompt/permission behavior, hardening resource bounds, and completing an actual Windows plus Android acceptance run through private Tailscale Serve. Host-restart runtime reattachment also remains open for reliability.
+Production static serving, pairing, durable storage, authenticated REST/SSE, bounded replay/connection resources, and the installable PWA are implemented. The remaining MVP work is verifying Command Code and OpenCode prompt/permission behavior and completing an actual Windows plus Android acceptance run through private Tailscale Serve. Host-restart runtime reattachment also remains open for reliability.
 
 ## Deferred scope
 

@@ -6,9 +6,9 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 
 ## Latest known-green commit
 
-`3e2dbcb` — `feat(host): serve production PWA assets`
+`dd3682b` — `fix(client): recover expired SSE event cursors`
 
-`pnpm verify`, `pnpm build`, `pnpm --filter @remote-agent-console/web test:e2e` (10 tests), and `pnpm --filter @remote-agent-console/web test:pwa` passed after integration. The 35 host tests include production static serving and authentication; the static test also passed a default `apps/web/dist` process smoke test.
+`pnpm verify`, `pnpm build`, `pnpm --filter @remote-agent-console/web test:e2e` (10 tests), and `pnpm --filter @remote-agent-console/web test:pwa` passed on the integrated tree. All 44 host tests passed, including production static serving, SSE capacity/recovery, persistence retention, and authentication.
 
 ## What works today
 
@@ -18,6 +18,7 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 - SQLite-backed host state persists projects, sessions, turns, normalized events, permissions, idempotency responses, pairing codes, and device credential hashes. Persisted event sequences continue after restart; active turns become failed and idle sessions disconnected because runtime process resumption is not implemented yet.
 - `SQLiteHostStore` implements the device `AuthStore` boundary with atomic one-time pairing and device creation, hash-only credential persistence, last-seen updates, revocation, and expired-code cleanup.
 - Normal host startup enables paired-device auth, prints a one-time code, protects APIs, and rate-limits pairing attempts, auth failures, and mutations. The PWA keeps credentials in IndexedDB and uses authenticated REST plus fetch-based SSE with `Last-Event-ID` replay.
+- SSE streams are capped at 64 globally and 4 per device by default. SQLite retains up to 10,000 events per session, protecting active turns and pending permissions; expired cursors get an HTTP 410 with a recovery sequence that the client uses to replay retained history. Idempotency keys are retained for seven days by default. Configure with `RAC_EVENT_HISTORY_LIMIT` and `RAC_IDEMPOTENCY_RETENTION_MS`.
 - Permission choices are the runtime's exact ACP options; duplicate permission events, stale pending permissions, and cross-session permission ID collisions are covered.
 - Runtime process failure clears active turns and reports a sanitized visible failure.
 - Mobile-first installable PWA with app-shell offline caching, device pairing, authenticated session creation/activity, tool cards, permission controls, cancellation, and reconnect/reload behavior.
@@ -32,7 +33,6 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 - No runtime session reattachment/resume after host restart; persisted sessions are visible but disconnected, and prompts are never replayed.
 - Production PWA serving requires `pnpm build` first; development still uses Vite and its API proxy.
 - No real Windows laptop + Android phone acceptance run.
-- Authenticated SSE connection caps and SQLite data retention limits are being added after an independent review identified resource exhaustion risks.
 
 ## Active branch
 
@@ -44,8 +44,8 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 
 ## Next three tasks
 
-1. Finish and verify SSE connection and SQLite storage limits.
-2. Verify real Command Code/OpenCode prompts, permissions, cancellation, and continuation; implement host-restart reattachment where supported.
+1. Verify real Command Code/OpenCode prompts, permissions, cancellation, and continuation.
+2. Implement host-restart runtime reattachment where supported and test runtime upgrade/recovery behavior.
 3. Run private Tailscale access on the Windows laptop and Android phone and record acceptance evidence.
 
 ## Last real-device test
