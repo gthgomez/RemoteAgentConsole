@@ -6,9 +6,11 @@ Milestones 0 and 1 are complete. The deterministic fake ACP agent works through 
 
 ## Latest known-green commit
 
-`b49cc43` — `fix(host): disconnect slow SSE clients`
+`bea5845` — `docs: record SSE reliability hardening`
 
-`pnpm verify`, `pnpm build`, `pnpm --filter @remote-agent-console/web test:e2e` (10 tests), and `pnpm --filter @remote-agent-console/web test:pwa` passed on the integrated tree. All 48 host tests passed, including production static serving, SSE capacity/backpressure/recovery, persistence retention, and authentication.
+On 2026-10-13, `pnpm verify` and `pnpm build` passed on this integrated commit. All 48 host tests passed, including production static serving, SSE capacity/backpressure/recovery, persistence retention, and authentication. The build reported non-blocking Rollup annotation warnings from Zod.
+
+The prior integrated-tree verification also passed `pnpm --filter @remote-agent-console/web test:e2e` (10 tests) and `pnpm --filter @remote-agent-console/web test:pwa`; those browser checks were not rerun for this repository publication review.
 
 ## What works today
 
