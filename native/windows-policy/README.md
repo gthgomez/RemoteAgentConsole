@@ -27,8 +27,9 @@ Build from a scratch copy so the repository stays free of `bin/` and `obj/`:
 
 ```powershell
 $scratch = Join-Path $env:LOCALAPPDATA ('rac-policy-build-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $scratch | Out-Null
-Copy-Item native/windows-policy/Rac.WindowsPolicy.Helper -Destination (Join-Path $scratch 'source') -Recurse
+New-Item -ItemType Directory -Path (Join-Path $scratch 'source') | Out-Null
+Get-ChildItem -LiteralPath native/windows-policy/Rac.WindowsPolicy.Helper -File |
+  Copy-Item -Destination (Join-Path $scratch 'source')
 pwsh -NoProfile -File native/windows-policy/publish-artifact.ps1 `
   -SourceRoot (Join-Path $scratch 'source') `
   -OutputDir (Join-Path $scratch 'artifact') `
@@ -36,9 +37,16 @@ pwsh -NoProfile -File native/windows-policy/publish-artifact.ps1 `
 ```
 
 The script writes exactly one file, `rac-windows-policy-helper.exe`, plus a
-hashable result object. It does not sign the artifact. The fixture publishes
-twice and fails if the hashes differ; the current build is reproducible across
-those publications and source-copy paths.
+hashable result object. It does not sign the artifact. It parses the actual
+HostWriter bundle manifest from the emitted bytes (marker, header, flags, entry
+types) rather than inferring extraction from the publish flag. Any entry that
+would require extraction is a hard failure. This artifact measured: header 6.0,
+flags 0, 169 assemblies, one deps JSON, one runtimeconfig JSON, zero entries
+requiring extraction.
+
+The fixture publishes twice and fails if hashes or measured manifests differ. This
+is same-host determinism across two source-copy paths, not a claim of cross-host
+reproducibility.
 
 Prerequisite if the publish is blocked: .NET SDK `9.0.321` and
 `Microsoft.NETCore.App.Runtime.win-x64` `8.0.34` (plus the matching host pack)
@@ -64,12 +72,14 @@ The fixture:
   ACLs, unprotected DACLs, unsafe ancestors, create-only/delete-child/
   change-permissions ancestor rights, leaf and ancestor junctions, non-regular
   leaves, empty/oversize/maximum-size files, hard links, an existing writer, a
-  pending delete handle, replacement identity changes, in-place hash changes,
+  delete-capable handle sharing denial, replacement identity changes, in-place hash changes,
   protected ACL fingerprint drift, exact canonical spelling, depth/component
   bounds, runtime-environment hardening, unsupported deny ACEs, invalid
   inputs, and sensitive-output suppression;
 - exits nonzero on any failed case and prints a JSON summary with artifact/source
-  SHA-256 values, publish inputs, reproducibility state and coverage gaps.
+  SHA-256 values, publish inputs, measured bundle manifest, binding commit/tree,
+  scoped dirty state, `dotnet.exe` hash, same-host reproducibility state and
+  coverage gaps.
 
 The default scratch parent is `%LOCALAPPDATA%`; the fixture creates and removes
 only its unique child. Do not point it at a shared-write tree unless that tree's
@@ -88,12 +98,13 @@ directory. `DOTNET_BUNDLE_EXTRACT_BASE_DIR` is not used; setting it (or any othe
 `CLR_LOADER_OPTIMIZATION` override) is rejected with `runtime-env-untrusted`.
 The launcher must clear those inherited variables. Default or inherited TEMP is
 not used for extraction. `COREHOST_*`/`DOTNET_*` effects occur in the host before
-managed Main; the launcher must clear them before launch. The helper's rejection
-is a post-host-start assertion, not a substitute for a clean launch environment.
+managed Main; the launcher must clear them before launch. `LaunchEnvironment`
+validation is **post-Main defense-in-depth**, not a pre-Main or pre-host fence,
+and is not a substitute for a clean launch environment.
 
-This closes NB-1 as a mandatory activation condition by removing native
-extraction, rather than relying on an extraction environment the apphost does not
-consume. It does not activate or production-bind the helper.
+The measured bundle manifest is the extraction property; no extraction is
+claimed from the publish flag alone. This is a launch precondition, not an
+activation or production binding.
 
 If a future publish reintroduces native extraction, an installer-provisioned
 fixed absolute owner-only non-reparse extraction directory, cleanup/protection of
@@ -326,7 +337,7 @@ Representative denial codes include:
   above the documented 8192-character/64-component bound are not exercised by
   the fixture. A deterministic within-read ACL or replacement race is not forced;
   the helper re-reads fingerprints before release, and cross-run fingerprint
-  drift plus a pending delete handle are covered. Ancestor owner/DACL is checked
+  drift plus a delete-capable handle sharing denial are covered. Ancestor owner/DACL is checked
   before the leaf read but is not re-read at the end; only the leaf and immediate
   directory are re-read.
 - Case-sensitive NTFS directories are not probed. The helper instead requires

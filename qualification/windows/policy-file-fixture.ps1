@@ -178,6 +178,32 @@ if (-not (Test-Path -LiteralPath $script:ProjectSource -PathType Container)) {
     Stop-Fixture 'fixture-source-missing' "Helper source not found: $script:ProjectSource"
 }
 
+$gitCommand = Get-Command git -ErrorAction SilentlyContinue
+if ($null -eq $gitCommand) {
+    Stop-Fixture 'fixture-binding-unavailable' 'git is unavailable for the qualification binding record.'
+}
+$bindingCommit = (& $gitCommand.Source -C $script:RepoRoot rev-parse HEAD 2>$null | Out-String).Trim()
+$commitExit = $LASTEXITCODE
+$bindingTree = (& $gitCommand.Source -C $script:RepoRoot rev-parse 'HEAD^{tree}' 2>$null | Out-String).Trim()
+$treeExit = $LASTEXITCODE
+$scopedStatus = @(& $gitCommand.Source -C $script:RepoRoot status --porcelain -- native/windows-policy qualification/windows/policy-file-fixture.ps1 2>$null)
+$statusExit = $LASTEXITCODE
+if (
+    $commitExit -ne 0 -or
+    $treeExit -ne 0 -or
+    $statusExit -ne 0 -or
+    [string]::IsNullOrWhiteSpace($bindingCommit) -or
+    [string]::IsNullOrWhiteSpace($bindingTree)
+) {
+    Stop-Fixture 'fixture-binding-unavailable' 'Could not read the scoped git binding state.'
+}
+$script:Binding = [pscustomobject]@{
+    commit = $bindingCommit
+    tree = $bindingTree
+    dirtyScoped = ($scopedStatus.Count -gt 0)
+    scopedStatus = @($scopedStatus | ForEach-Object { [string]$_ })
+}
+
 if ($null -eq ('RacFixtureNative' -as [type])) {
     try {
         Add-Type -TypeDefinition @'
@@ -218,6 +244,37 @@ public static class RacFixtureNative
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetShortPathName(
+        string longPath,
+        IntPtr shortPath,
+        uint bufferLength);
+
+    public static string GetShortPath(string longPath)
+    {
+        var required = GetShortPathName(longPath, IntPtr.Zero, 0);
+        if (required == 0)
+        {
+            return null;
+        }
+
+        var buffer = Marshal.AllocHGlobal(checked((int)required * 2));
+        try
+        {
+            var written = GetShortPathName(longPath, buffer, required);
+            if (written == 0 || written >= required)
+            {
+                return null;
+            }
+
+            return Marshal.PtrToStringUni(buffer);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
 
     public static string GetFinalDosPath(string path)
     {
@@ -266,7 +323,7 @@ public static class RacFixtureNative
         }
     }
 
-    public static IntPtr OpenDeleteHandle(string path)
+    public static IntPtr OpenDeleteCapableHandle(string path)
     {
         var handle = CreateFileW(
             path,
@@ -397,16 +454,36 @@ $sourceCopyB = Join-Path $script:ScratchRoot 'source-b'
 $caseRoot = Join-Path $script:ScratchRoot 'cases'
 New-Item -ItemType Directory -Path $sourceCopy, $sourceCopyB, $caseRoot -Force | Out-Null
 
+$helperSourceNames = @(
+    'Rac.WindowsPolicy.Helper.csproj',
+    'Program.cs',
+    'PolicyFailureException.cs',
+    'PolicyPath.cs',
+    'HandleQueries.cs',
+    'WindowsSecurity.cs',
+    'PolicyFileReader.cs',
+    'PolicySnapshot.cs',
+    'NativeMethods.cs',
+    'LaunchEnvironment.cs'
+)
+$copiedProjectRoot = Join-Path $sourceCopy 'Rac.WindowsPolicy.Helper'
+$copiedProjectRootB = Join-Path $sourceCopyB 'Rac.WindowsPolicy.Helper'
+New-Item -ItemType Directory -Path $copiedProjectRoot, $copiedProjectRootB -Force | Out-Null
 try {
-    Copy-Item -LiteralPath $script:ProjectSource -Destination $sourceCopy -Recurse -ErrorAction Stop
-    Copy-Item -LiteralPath $script:ProjectSource -Destination $sourceCopyB -Recurse -ErrorAction Stop
+    foreach ($sourceName in $helperSourceNames) {
+        $sourcePath = Join-Path $script:ProjectSource $sourceName
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            throw "Exact helper source is missing: $sourcePath"
+        }
+
+        Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $copiedProjectRoot $sourceName) -ErrorAction Stop
+        Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $copiedProjectRootB $sourceName) -ErrorAction Stop
+    }
 }
 catch {
     Stop-Fixture 'fixture-source-copy-failed' $_.Exception.Message
 }
 
-$copiedProjectRoot = Join-Path $sourceCopy 'Rac.WindowsPolicy.Helper'
-$copiedProjectRootB = Join-Path $sourceCopyB 'Rac.WindowsPolicy.Helper'
 $project = Join-Path $copiedProjectRoot 'Rac.WindowsPolicy.Helper.csproj'
 $projectB = Join-Path $copiedProjectRootB 'Rac.WindowsPolicy.Helper.csproj'
 if (
@@ -449,6 +526,10 @@ if ($artifactA.sha256 -ne $artifactB.sha256) {
         "Two publications of the same pinned inputs differ: $($artifactA.sha256) vs $($artifactB.sha256)")
 }
 
+if (($artifactA.bundleManifest | ConvertTo-Json -Compress) -ne ($artifactB.bundleManifest | ConvertTo-Json -Compress)) {
+    Stop-Fixture 'fixture-artifact-bundle-manifest-not-reproducible' 'Measured bundle manifests differ between publications.'
+}
+
 $script:HelperPath = $artifactA.path
 $script:HelperHash = $artifactA.sha256
 $script:Artifact = [pscustomobject]@{
@@ -459,10 +540,13 @@ $script:Artifact = [pscustomobject]@{
     selfContained = $artifactA.selfContained
     singleFile = $artifactA.singleFile
     nativeExtraction = $artifactA.nativeExtraction
+    bundleManifest = $artifactA.bundleManifest
+    determinismScope = $artifactA.determinismScope
     sdkVersion = $artifactA.sdkVersion
     runtimeFrameworkVersion = $artifactA.runtimeFrameworkVersion
     dotnetPath = $artifactA.dotnetPath
     dotnetVersion = $artifactA.dotnetVersion
+    dotnetSha256 = $artifactA.dotnetSha256
     targetFramework = $artifactA.targetFramework
     publishProperties = $artifactA.publishProperties
     publishScript = $publishScript
@@ -1400,17 +1484,17 @@ Run-Case 'existing-writer-fails-closed' {
     }
 }
 
-Run-Case 'pending-delete-handle-fails-closed' {
-    $directory = New-TestDirectory 'pending delete handle'
+Run-Case 'delete-capable-handle-sharing-denied' {
+    $directory = New-TestDirectory 'delete capable handle'
     $file = Join-Path $directory 'policy.json'
     Write-TestFile $file $policyBytes | Out-Null
     Set-OwnerOnlyAcl -Path $file
     Set-OwnerOnlyAcl -Path $directory -Directory
 
-    $handle = [RacFixtureNative]::OpenDeleteHandle($file)
+    $handle = [RacFixtureNative]::OpenDeleteCapableHandle($file)
     try {
         $result = Invoke-Helper @($file)
-        Assert-Denied 'pending-delete-handle-fails-closed' $result 3 @('file-open-failed', 'file-unavailable')
+        Assert-Denied 'delete-capable-handle-sharing-denied' $result 3 @('file-open-failed', 'file-unavailable')
     }
     finally {
         [RacFixtureNative]::Close($handle)
@@ -1444,7 +1528,7 @@ Run-Case 'short-name-alias' {
     Set-OwnerOnlyAcl -Path $file
     Set-OwnerOnlyAcl -Path $directory -Directory
 
-    $shortPath = (& cmd.exe /c ('for %I in ("' + $file + '") do @echo %~sI') | Out-String).Trim()
+    $shortPath = [RacFixtureNative]::GetShortPath($file)
     if ([string]::IsNullOrWhiteSpace($shortPath) -or [string]::Equals($shortPath, $file, [StringComparison]::OrdinalIgnoreCase)) {
         Add-Result -Name 'short-name-alias' -Status 'UNSUPPORTED' -Detail '8.3 short-name generation is unavailable for the fixture path'
         return
@@ -1493,6 +1577,7 @@ $overall = if ($failures.Count -gt 0) { 'FAIL' } elseif ($unsupported.Count -gt 
 $summary = [pscustomobject]@{
     suite = 'windows-policy-helper-native-fixture'
     status = $overall
+    binding = $script:Binding
     scratchParent = $script:ScratchParent
     scratchRoot = $script:ScratchRoot
     scratchOwned = -not [string]::IsNullOrWhiteSpace($script:ScratchChildName)
@@ -1510,11 +1595,11 @@ $summary = [pscustomobject]@{
         'A true file symlink was not created in this environment; a directory junction is used as the leaf reparse witness.',
         'If writing the fixture ownership marker fails, cleanup refuses to delete the unmarked child; the child may leak rather than risk caller data.',
         'The helper rejects DENY ACEs on the leaf/immediate directory as unsupported; ancestor DENY behavior is not separately exercised.',
-        'Extraction is disabled (IncludeNativeLibrariesForSelfExtract=false); DOTNET_BUNDLE_EXTRACT_BASE_DIR and other DOTNET_* overrides are rejected. If extraction is reintroduced, protected extraction becomes a new mandatory launch boundary.',
+        'The measured bundle manifest reports needsExtractionCount=0 (header 6.0, flags 0, 169 assemblies, one deps JSON, one runtimeconfig JSON); DOTNET_BUNDLE_EXTRACT_BASE_DIR and other DOTNET_* overrides are rejected. If extraction appears in a future manifest, protected extraction becomes a new mandatory launch boundary.',
         'COREHOST_TRACE can emit host stderr before managed Main; the helper rejection is after host start, so launchers must clear COREHOST_* before launch.',
         'Changing the file owner to another SID requires privilege and is not exercised.',
         'A non-fixed/remote volume is not mounted for this fixture; drive-type refusal is covered by code inspection only.',
-        'Within-read concurrent ACL drift is not forced deterministically; the helper re-reads owner/DACL before release, and cross-run fingerprint drift plus a pending delete handle are covered.',
+        'Within-read concurrent ACL drift is not forced deterministically; the helper re-reads owner/DACL before release, and cross-run fingerprint drift plus a delete-capable handle sharing denial are covered.',
         'Ancestor owner/DACL is checked before the leaf read but not re-read at the end; only the leaf and immediate directory are re-read.',
         'An ancestor create-only ACE is intentionally allowed because it cannot replace or delete an existing name; delete-child and change-permissions ancestor cases are exercised.',
         'Case-sensitive NTFS directories are not probed; the helper instead requires exact canonical component spelling and rejects case-only mismatches.',
