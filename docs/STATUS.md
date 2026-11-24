@@ -7,7 +7,8 @@ The November 24 campaign selects a [pinned Happier composition](decisions/mainta
 - The composition builder checks reference artifacts and stages the hash-pinned Happier patch series. The CLI, server build checks and web export passed on Linux with the selected toolchain. Candidate packaging and all runtime profiles are disabled.
 - The restricted CLI binds session reads to the receiver's registered directory, denies unresolved methods and launches, and requires a separate decision for each ACP permission occurrence. Runtime provisioning and Windows policy ACL checks are pending.
 - Restricted server authentication verifies the current grant on every token acceptance and closes legacy login routes. Owner enrollment, live revocation, and controlled backup restore remain open. The additive grant schema was verified against fixture data.
-- The Windows process-tree fixture compiles. Its Job Object, descendant shutdown and unrelated-process checks require native Windows execution.
+- The relay supports `--autostart on-demand` for local user installation. The Windows plan registers a manual task with no sign-in trigger. The process-tree fixture compiles. Task scheduling, Job Object containment, descendant shutdown and unrelated-process checks require native Windows execution.
+- The hosted Windows composition check at `988fffce978d5a21e0eaf65621ed3b3fc96bfa57` received no runner or steps because the Actions budget prevented the job from starting. [Windows workflow job](https://github.com/gthgomez/RemoteAgentConsole/actions/runs/45439783936/job/138607374327)
 
 ## Current milestone
 

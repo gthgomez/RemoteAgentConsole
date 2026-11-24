@@ -15,6 +15,11 @@
       "path": "patches/happier/0002-require-current-device-grants.patch",
       "sha256": "7623fcf7d2ec64ce5095c470892c224c070f6371c72447dd0864058e69abb825",
       "description": "Restricted server grant validation, legacy login barrier, and additive storage"
+    },
+    {
+      "path": "patches/happier/0003-on-demand-relay-startup.patch",
+      "sha256": "c4ddef7289d8d4b7929b86a0293cbe4ff54beecb148b72e08582e8406d81857d",
+      "description": "Explicit on-demand startup for local user relay installation"
     }
   ]
 }
