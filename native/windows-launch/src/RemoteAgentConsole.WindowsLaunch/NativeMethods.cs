@@ -17,8 +17,11 @@ internal static class NativeMethods
     internal const uint CreateUnicodeEnvironment = 0x00000400;
     internal const uint CreateDetachedProcess = 0x00000008;
     internal const uint ExtendedStartupInfoPresent = 0x00080000;
+    internal const uint StartfUseStdHandles = 0x00000100;
+    internal const uint HandleFlagInherit = 0x00000001;
 
     internal static readonly IntPtr ProcThreadAttributeJobList = (IntPtr)0x0002000D;
+    internal static readonly IntPtr ProcThreadAttributeHandleList = (IntPtr)0x00020002;
 
     internal const uint JobObjectLimitKillOnJobClose = 0x00002000;
     internal const uint JobObjectLimitBreakawayOk = 0x00000800;
@@ -87,6 +90,21 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CreatePipe(
+        out IntPtr readPipe,
+        out IntPtr writePipe,
+        ref SecurityAttributes pipeAttributes,
+        uint size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetHandleInformation(
+        SafeFileHandle handle,
+        uint mask,
+        uint flags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool UpdateProcThreadAttribute(
         IntPtr attributeList,
         uint flags,
@@ -141,6 +159,14 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CloseHandle(IntPtr handle);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct SecurityAttributes
+    {
+        internal int Length;
+        internal IntPtr SecurityDescriptor;
+        internal int InheritHandle;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct ProcessInformation

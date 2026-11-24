@@ -29,16 +29,28 @@ public sealed class OwnedProcess : IDisposable
     private readonly TimeSpan _settlementTimeout;
     private int _disposed;
 
-    internal OwnedProcess(SafeProcessHandle process, SafeJobHandle job, int processId, TimeSpan settlementTimeout)
+    internal OwnedProcess(
+        SafeProcessHandle process,
+        SafeJobHandle job,
+        int processId,
+        TimeSpan settlementTimeout,
+        ChildStandardStreams? standardStreams)
     {
         _process = process;
         _job = job;
         ProcessId = processId;
         _settlementTimeout = settlementTimeout;
+        StandardStreams = standardStreams;
     }
 
     /// <summary>The reported process ID. Evidence only; never used to signal or look up the process.</summary>
     public int ProcessId { get; }
+
+    /// <summary>
+    /// Parent-side stdin/stdout/stderr custody when pipes were opted in; null for the
+    /// default no-stdio launch. Output and error are distinct streams.
+    /// </summary>
+    public ChildStandardStreams? StandardStreams { get; }
 
     /// <summary>True when the exact root handle has signalled exit.</summary>
     public bool HasExited
@@ -170,6 +182,7 @@ public sealed class OwnedProcess : IDisposable
 
         _job.Dispose();
         _process.Dispose();
+        StandardStreams?.Dispose();
     }
 
     internal static TimeSpan NormalizeTimeout(TimeSpan? timeout, string parameterName, TimeSpan defaultTimeout)

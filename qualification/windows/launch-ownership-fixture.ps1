@@ -194,6 +194,7 @@ function Assert-ProductionSourceScan {
         'taskkill'                    = 'name/PID termination utility'
         'Stop-Process'                = 'name/PID termination cmdlet'
         'UseShellExecute'             = 'shell execution'
+        'inheritHandles: true'        = 'unconditional inherit-all handle inheritance'
         'AssignProcessToJobObject'    = 'post-create job assignment (creation-time assignment is required)'
         'GetEnvironmentVariable'      = 'ambient environment read'
         'GetEnvironmentVariables'     = 'ambient environment enumeration'
@@ -228,6 +229,19 @@ function Assert-ProductionSourceScan {
         }
     }
 
+    $allSource = ($files | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+    $requiredPatterns = [ordered]@{
+        'PROC_THREAD_ATTRIBUTE_JOB_LIST'    = 'creation-time job containment'
+        'PROC_THREAD_ATTRIBUTE_HANDLE_LIST' = 'explicit per-create stdio handle list'
+        'StartfUseStdHandles'               = 'explicit child standard handles'
+        'SetHandleInformation'              = 'explicit inheritable child / non-inheritable parent ends'
+    }
+    foreach ($requiredPattern in $requiredPatterns.Keys) {
+        if (-not $allSource.Contains($requiredPattern, [System.StringComparison]::Ordinal)) {
+            $violations += "Production source is missing '$requiredPattern' ($($requiredPatterns[$requiredPattern]))."
+        }
+    }
+
     if ($violations.Count -gt 0) {
         throw "Production source scan failed:`n$($violations -join "`n")"
     }
@@ -236,7 +250,8 @@ function Assert-ProductionSourceScan {
         status = 'PASS'
         filesScanned = $files.Count
         patterns = @($patterns.Keys)
-        note = 'Library sources contain no PID/name process control, shell execution, breakaway flag, network listener/socket, registry, service or scheduler surface, and no external package reference.'
+        requiredPatterns = @($requiredPatterns.Keys)
+        note = 'Library sources contain no PID/name process control, shell execution, breakaway flag, inherit-all spawn, network listener/socket, registry, service or scheduler surface, and no external package reference. Creation-time JOB_LIST and explicit HANDLE_LIST are both present; child standard handles are explicit and pipe ends are explicitly marked inheritable/non-inheritable.'
     }
 }
 
@@ -374,8 +389,10 @@ try {
     $runnerDll = Join-Path $launcherArtifacts 'bin/RemoteAgentConsole.WindowsLaunch.Tests/release/RemoteAgentConsole.WindowsLaunch.Tests.dll'
     $probeExe = Join-Path $launcherArtifacts 'bin/RemoteAgentConsole.WindowsLaunch.EnvironmentProbe/release/RemoteAgentConsole.WindowsLaunch.EnvironmentProbe.exe'
     $probeDll = Join-Path $launcherArtifacts 'bin/RemoteAgentConsole.WindowsLaunch.EnvironmentProbe/release/RemoteAgentConsole.WindowsLaunch.EnvironmentProbe.dll'
+    $stdioProbeExe = Join-Path $launcherArtifacts 'bin/RemoteAgentConsole.WindowsLaunch.StdioProbe/release/RemoteAgentConsole.WindowsLaunch.StdioProbe.exe'
+    $stdioProbeDll = Join-Path $launcherArtifacts 'bin/RemoteAgentConsole.WindowsLaunch.StdioProbe/release/RemoteAgentConsole.WindowsLaunch.StdioProbe.dll'
     $fixtureDll = Join-Path $fixtureDir 'ProcessTreeFixture.dll'
-    foreach ($artifact in @($script:testExe, $script:libraryDll, $runnerDll, $probeExe, $probeDll, $fixtureDll)) {
+    foreach ($artifact in @($script:testExe, $script:libraryDll, $runnerDll, $probeExe, $probeDll, $stdioProbeExe, $stdioProbeDll, $fixtureDll)) {
         if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
             throw "The launcher build did not produce $artifact"
         }
@@ -384,7 +401,7 @@ try {
     $witness = Join-Path $runDir 'witness'
     $testReceipt = Join-Path $runDir 'test-receipt.json'
     $suiteLog = Join-Path $runDir 'test-output.log'
-    $suiteOutput = & $script:testExe --fixture $script:fixtureExe --scratch $witness --receipt $testReceipt --probe $probeExe 2>&1
+    $suiteOutput = & $script:testExe --fixture $script:fixtureExe --scratch $witness --receipt $testReceipt --probe $probeExe --stdio-probe $stdioProbeExe 2>&1
     $script:suiteExit = $LASTEXITCODE
     $suiteText = ($suiteOutput | Out-String)
     $suiteText | Set-Content -LiteralPath $suiteLog -Encoding utf8
@@ -405,6 +422,8 @@ try {
         'creation-time-assignment-failure'
         'resume-count-guard'
         'environment-policy'
+        'stdio-pipes'
+        'stdio-handle-list-failure'
         'no-start'
     )
     $observedTests = @($script:testData.tests | ForEach-Object { $_.name })
@@ -426,6 +445,8 @@ try {
         (Get-FileRecord -Path $fixtureDll -BasePath $runDir -Kind 'synthetic-fixture-dll'),
         (Get-FileRecord -Path $probeExe -BasePath $runDir -Kind 'environment-probe-apphost'),
         (Get-FileRecord -Path $probeDll -BasePath $runDir -Kind 'environment-probe-dll'),
+        (Get-FileRecord -Path $stdioProbeExe -BasePath $runDir -Kind 'stdio-probe-apphost'),
+        (Get-FileRecord -Path $stdioProbeDll -BasePath $runDir -Kind 'stdio-probe-dll'),
         (Get-FileRecord -Path $fixtureSource -BasePath $RepoRoot -Kind 'fixture-source'),
         (Get-FileRecord -Path $PSCommandPath -BasePath $RepoRoot -Kind 'qualification-script')
     )
@@ -506,14 +527,16 @@ finally {
         scratchRoot = $ScratchRoot
         error = $script:errorMessage
         scope = [ordered]@{
-            artifact = 'managed native library (DLL) plus console conformance runner and synthetic environment probe'
+            artifact = 'managed native library (DLL) plus console conformance runner and synthetic environment/stdio probes'
             installedProduct = $false
             productionReachable = $false
             hostOrRelayReference = $false
             serviceSchedulerOrInstaller = $false
             networkListener = $false
-            stdioReachable = $false
-            note = 'First slice only. Nothing under apps/ or packages/ references this library; no stdio handles or host wiring are exposed, so there is no reachable agent launch path. No machine configuration is changed.'
+            stdioCustodyAvailable = $true
+            stdioHostBinding = $false
+            installedCodexBinding = $false
+            note = 'First slice only. Nothing under apps/ or packages/ references this library; optional stdio pipes are library-only, with no host, Codex app-server, daemon or remote binding. No machine configuration is changed.'
         }
         host = [ordered]@{
             os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
@@ -530,7 +553,9 @@ finally {
         resumeTestCoverage = 'The launcher test injects count 2 and asserts injected/observed flags plus record-level semantics; observed 0, observed >1 and ResumeThread-error branches are not independently executed.'
         unsupportedTestCoverage = 'The creation-time assignment failure is injected before CreateProcess; a real host rejection of PROC_THREAD_ATTRIBUTE_JOB_LIST is not exercised by this suite.'
         buildRestore = 'dotnet build may run an implicit restore for framework/reference packs from the installed SDK; this slice declares no PackageReference and no external package.'
-        stdioReachability = 'No stdio pipes or host wiring are exposed; this component is not a reachable agent launch path.'
+        stdioCustody = 'Optional typed stdin/stdout/stderr pipes with explicit per-create PROC_THREAD_ATTRIBUTE_HANDLE_LIST; default none; child ends inheritable only for the create window; parent ends non-inheritable; stderr is a distinct pipe and is never merged.'
+        stdioHostBinding = 'No host, maintained Codex app-server, daemon or remote binding is installed or exercised; pipe custody is library-only.'
+        stdioTestCoverage = 'The synthetic child performs a bounded PING/PONG request, a distinct stderr line, BYE shutdown and an EOF shutdown; it also reports absence of an unrelated inheritable sentinel handle. Parent pipe ends are checked non-inheritable. An injected explicit-handle-list failure fails closed before child code. Pipe-enabled launches are serialized in the owner process during the inheritable create window.'
         cleanupSemantics = 'Exit is confirmed only by a bounded wait on the exact handle; AccessDenied termination results are recorded as suggestions and never set confirmed flags.'
         environment = 'Required frozen caller-supplied Unicode environment block; no ambient environment read or merge.'
         sourceScan = $script:sourceScan
@@ -541,10 +566,13 @@ finally {
         testReceiptPath = $testReceipt
         testOutputPath = $suiteLog
         limitations = @(
-            'The component is a DLL/framework artifact; it is not packaged, installed, signed or reachable from the host or relay. No stdio pipes or host wiring are exposed.'
+            'The component is a DLL/framework artifact; it is not packaged, installed, signed or reachable from the host or relay. Optional stdio pipes are library-only, with no host, Codex app-server, daemon or remote binding.'
             'dotnet build may run an implicit restore for framework/reference packs from the installed SDK; there is no PackageReference and no external package is declared.'
+            'Pipe custody is synchronous and library-only. The owner process must be a dedicated launcher: three child ends are inheritable during the bounded create window; pipe-enabled launches are serialized, but unrelated inherit-all spawns in the same process are not prevented by this component.'
+            'No maintained Codex app-server, daemon, host integration or remote command surface is installed, bound or exercised.'
             'Creation-time job assignment uses STARTUPINFOEX/PROC_THREAD_ATTRIBUTE_JOB_LIST (Windows 10 1607+). The suite injects the attribute-boundary failure before CreateProcess; a real host rejection of the OS attribute is not exercised. If the real API is unavailable, launch fails before process creation with Unsupported=true; no post-create assignment or unsandboxed fallback exists.'
-            'Only creation-time attribute failure and unsafe resume count are fault-injected; containment verification shares the rollback path but is not separately injected.'
+            'Only creation-time attribute failure, explicit stdio handle-list failure and unsafe resume count are fault-injected; containment verification shares the rollback path but is not separately injected.'
+            'An injected explicit stdio handle-list failure fails closed before CreateProcess; it is not a real OS rejection of the attribute.'
             'The launcher test injects resume count 2 and asserts injected/observed flags plus record-level semantics; observed 0, observed >1 and ResumeThread-error branches are not independently executed.'
             'The environment is an explicit frozen caller-supplied policy; the library reads no ambient environment. The caller must include required variables such as SystemRoot and must not include live credentials.'
             'ResumeThread accepts only a previous suspension count of exactly 1; any other count is rolled back before resumption.'

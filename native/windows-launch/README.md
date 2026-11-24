@@ -1,8 +1,10 @@
 # Windows launch ownership (first slice)
 
 Owner-only process ownership for the Remote Agent Console / Happier Windows
-composition. This is a **native library component plus a conformance runner and a
-synthetic environment probe**, not an installed product. Nothing in `apps/` or
+composition. This is a **native library component plus a conformance runner and
+synthetic environment/stdin-stdout-stderr probes**, not an installed product. Nothing in
+`apps/` or `packages/` references it, and no maintained Codex app-server is installed or
+bound. Nothing in `apps/` or
 `packages/` references it, so it is not production reachable yet.
 
 ## What it does
@@ -22,10 +24,12 @@ The launch sequence is fixed and ordered:
 2. query the job back and refuse to continue unless kill-on-close is set and both
    breakaway flags are clear;
 3. build a `STARTUPINFOEX` attribute list containing
-   `PROC_THREAD_ATTRIBUTE_JOB_LIST` for that job;
+   `PROC_THREAD_ATTRIBUTE_JOB_LIST` for that job; when stdio pipes are opted in, also
+   add `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` with exactly the three child pipe handles;
 4. `CreateProcessW` with `EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED |
    CREATE_UNICODE_ENVIRONMENT | CREATE_DETACHED_PROCESS`, the explicit Unicode
-   environment block, `bInheritHandles = false`, no shell and no breakaway;
+   environment block, and no shell or breakaway. `bInheritHandles` is false for the
+   default no-stdio path and true only with the explicit handle list for pipes;
 5. verify membership with `IsProcessInJob` while the process is still suspended;
 6. resume only when `ResumeThread` reports an observed previous suspension count of
    exactly 1. Observed 0 is reported as possibly externally resumed/runnable, positive
@@ -41,6 +45,13 @@ qualification suite's `creation-time-assignment-failure` case injects that failu
 the attribute boundary; it does **not** prove that a real host rejects the OS attribute,
 which remains an OS-dependent path the lead must run on the target host.
 
+Optional pipe custody is a typed library API: `ChildStdioMode.Pipes` creates one
+stdin, stdout and stderr pipe set. Child ends are inheritable only for the bounded create
+window, parent ends are never inheritable, and stdout/stderr remain distinct. Pipe-enabled
+launches serialize inside the owner process; the component must run in a dedicated owner
+launcher, and unrelated inherit-all spawns must not run concurrently. There is no
+inherit-all fallback.
+
 `OwnedProcess.KillAndSettle` terminates the exact root handle, terminates the job,
 and waits within a bound for job accounting to reach zero. `Dispose` closes the job, so
 kill-on-close terminates anything still owned. No code path looks up a process by ID or
@@ -53,7 +64,7 @@ image name, enumerates processes, or signals a process outside the job.
 | Executable | owner-qualified absolute `.exe` only |
 | Arguments | owner-qualified fixed argv only |
 | Environment | required explicit frozen block; no ambient read, merge or expansion |
-| Stdio | not redirected; no stdio API or host wiring is exposed, so there is no reachable agent runtime path in this slice |
+| Stdio | optional typed stdin/stdout/stderr pipes; default none; explicit `HANDLE_LIST`, non-inheritable parent ends, distinct stderr; library-only with no host/Codex binding |
 | Console | no console/window is allocated for the root |
 | Containment | creation-time private job, kill-on-close, no breakaway |
 | Resume | observed previous suspension count must be exactly 1; observed 0 is unknown/externally runnable, injected values are simulated |
@@ -81,6 +92,7 @@ native/windows-launch/
   src/RemoteAgentConsole.WindowsLaunch/                    # net8.0-windows class library
   tests/RemoteAgentConsole.WindowsLaunch.Tests/            # console conformance runner
   tests/RemoteAgentConsole.WindowsLaunch.EnvironmentProbe/ # synthetic child env probe
+  tests/RemoteAgentConsole.WindowsLaunch.StdioProbe/        # synthetic pipe/stdio probe
 ```
 
 The runner drives the existing synthetic tree at
@@ -108,9 +120,10 @@ sweep is performed.
 The script:
 
 - verifies the exact base commit and the Windows x64 / .NET 8+ host;
-- scans the production sources for forbidden process-control, ambient-environment and
-  network patterns, and for any post-create job assignment;
-- builds the synthetic fixture and the library/runner/probe with one MSBuild job at a
+- scans the production sources for forbidden process-control, ambient-environment,
+  inherit-all and network patterns, and requires both explicit `JOB_LIST` and
+  `HANDLE_LIST` plus explicit pipe inheritable/non-inheritable setup;
+- builds the synthetic fixture and the library/runner/probes with one MSBuild job at a
   time into a unique scratch directory (no repository `bin`/`obj`; no `PackageReference`
   items exist, so no external package is declared. `dotnet build` may still run an
   implicit restore for framework and reference packs from the installed SDK);
@@ -147,6 +160,12 @@ Scratch output is created under the caller-supplied scratch root, for example
   branches are implemented and typed but are not independently executed by this suite;
 - **environment policy**: the synthetic probe sees exactly the explicit policy, with
   no ambient sentinel, `PATH` or `USERPROFILE` propagation;
+- **stdio pipes**: with `ChildStdioMode.Pipes`, a harmless synthetic child performs a
+  bounded fixed ASCII PING/PONG exchange, emits a distinct stderr marker, shuts down via
+  `BYE`, and separately via stdin EOF. It also reports absence of an unrelated
+  inheritable sentinel handle, proving the explicit handle list did not fall back to
+  inherit-all; the default no-stdio launch exposes no streams. An injected explicit
+  handle-list failure fails closed before any child code runs;
 - no start: missing executable and missing working directory produce staged failures
   with no process created;
 - unrelated same-image peer: outside the job, not a member, heartbeat continues
@@ -161,15 +180,21 @@ Scratch output is created under the caller-supplied scratch root, for example
   Windows 10.0.26200 x64; if the OS rejects or lacks the attribute API, launch fails
   before process creation and no fallback is attempted. A real host rejection of the
   attribute API is **not** exercised; only the injected boundary failure is.
-- Stdio pipes, ACL hardening, reparse-point checks, code signing, upgrade/rollback and
-  host integration are later slices. No stdio API or host wiring is exposed, so this
-  slice has no reachable agent launch path.
-- Only the creation-time attribute failure and the unsafe resume count are
-  fault-injected. The resume test injects count `2` and checks the injected/observed
-  flags plus record-level semantics; observed `0`, observed positive counts and a real
-  `ResumeThread` failure are not independently executed. Injected resume values are
-  labelled simulated and never treated as an OS observation. Containment verification
-  shares the same rollback routine but is not separately injected.
+- Pipe custody is synchronous and library-only; it is not wired to the host, maintained
+  Codex app-server, daemon, relay or any remote command surface. ACL hardening,
+  reparse-point checks, code signing, upgrade/rollback and host/Codex binding remain
+  later slices, so this slice still has no production agent launch path.
+- Pipe-enabled launches create three inheritable child ends during the bounded create
+  window. Run this component in a dedicated owner launcher; pipe-enabled launches are
+  serialized, but unrelated inherit-all spawns in the same OS process are outside its
+  control.
+- Only the creation-time attribute failure, explicit stdio handle-list failure and
+  unsafe resume count are fault-injected. The resume test injects count `2` and checks
+  the injected/observed flags plus record-level semantics; observed `0`, observed
+  positive counts and a real `ResumeThread` failure are not independently executed.
+  Injected resume values are labelled simulated and never treated as an OS observation.
+  Containment verification shares the same rollback routine but is not separately
+  injected. The injected handle-list failure also does not prove a real OS rejection.
 - `dotnet build` may run an implicit restore for framework/reference packs from the
   installed SDK. There are no `PackageReference` items in this slice, so no external
   package is declared.
@@ -191,8 +216,8 @@ Scratch output is created under the caller-supplied scratch root, for example
    and sign the resulting binaries.
 2. Integrate only behind the host's allowlisted launch-profile resolver; never accept
    a remote path, argv or environment policy.
-3. Add stdio pipe ownership and a reviewed per-profile environment policy before real
-   agent use.
+3. Bind the typed pipe custody to the host/Codex app-server and add a reviewed
+   per-profile environment policy before real agent use.
 4. Define the per-user install directory and ACLs, versioned ABI, and upgrade/rollback
    behavior.
 5. Keep scheduler/service/global changes out of scope; registration remains a manual,

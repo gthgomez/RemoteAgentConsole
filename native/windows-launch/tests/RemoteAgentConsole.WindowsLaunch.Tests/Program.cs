@@ -73,13 +73,19 @@ internal static class TestRunner
             return 2;
         }
 
+        if (!File.Exists(options.StdioProbePath))
+        {
+            Console.Error.WriteLine($"REFUSED The synthetic stdio probe was not found: {options.StdioProbePath}");
+            return 2;
+        }
+
         var suiteRoot = Path.Combine(
             options.ScratchDirectory,
             $"witness suite {DateTime.UtcNow:yyyyMMdd-HHmmss} ünïcode 树");
         Directory.CreateDirectory(suiteRoot);
 
         var fixture = new FixtureControl(options.FixturePath);
-        var context = new ScenarioContext(fixture, suiteRoot, options.ProbePath);
+        var context = new ScenarioContext(fixture, suiteRoot, options.ProbePath, options.StdioProbePath);
         var results = new List<TestReceipt>();
         string status = "PASS";
 
@@ -124,6 +130,8 @@ internal static class TestRunner
             Run(results, "creation-time-assignment-failure", checks => WindowsLaunchScenarios.CreationTimeAssignmentFailure(context, checks));
             Run(results, "resume-count-guard", checks => WindowsLaunchScenarios.ResumeCountGuard(context, checks));
             Run(results, "environment-policy", checks => WindowsLaunchScenarios.EnvironmentPolicyCheck(context, checks));
+            Run(results, "stdio-pipes", checks => WindowsLaunchScenarios.StdioPipesCheck(context, checks));
+            Run(results, "stdio-handle-list-failure", checks => WindowsLaunchScenarios.StdioHandleListFailure(context, checks));
             Run(results, "no-start", checks => WindowsLaunchScenarios.NoStart(context, checks));
         }
         catch (Exception error)
@@ -138,7 +146,7 @@ internal static class TestRunner
             status = "FAIL";
         }
 
-        WriteReceipt(options.ReceiptPath, status, fixture, options.ProbePath, suiteRoot, results);
+        WriteReceipt(options.ReceiptPath, status, fixture, options.ProbePath, options.StdioProbePath, suiteRoot, results);
 
         Console.WriteLine();
         Console.WriteLine($"SUITE {SuiteName} {status} ({results.Count - failed.Length}/{results.Count} passed)");
@@ -184,6 +192,7 @@ internal static class TestRunner
         string status,
         FixtureControl fixture,
         string probePath,
+        string stdioProbePath,
         string suiteRoot,
         IReadOnlyList<TestReceipt> results)
     {
@@ -195,20 +204,29 @@ internal static class TestRunner
             generatedUtc = DateTimeOffset.UtcNow,
             scope = new
             {
-                artifact = "managed class library (DLL) plus a console conformance runner and synthetic probe",
+                artifact = "managed class library (DLL) plus a console conformance runner and synthetic probes",
                 productReachable = false,
                 installedProduct = false,
-                note = "Not referenced by apps/host or packages; no scheduler, service, installer, registry value or network listener is created.",
+                hostOrCodexBinding = false,
+                note = "Not referenced by apps/host or packages; no scheduler, service, installer, registry value or network listener is created. No maintained Codex app-server is installed or bound.",
             },
             contract = new
             {
                 executable = "owner-supplied absolute .exe path, passed as lpApplicationName",
                 arguments = "owner-supplied fixed argv serialized with Windows quoting rules",
                 environment = "required frozen Unicode block from the caller's explicit policy; no ambient environment read or merge",
-                stdio = "not redirected in this slice",
-                creation = "STARTUPINFOEX + PROC_THREAD_ATTRIBUTE_JOB_LIST, CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_DETACHED_PROCESS; no shell, no breakaway",
+                stdio = "optional typed stdin/stdout/stderr pipes (default none); when opted in, exactly three explicit child handles are inherited through PROC_THREAD_ATTRIBUTE_HANDLE_LIST; parent ends are non-inheritable; stderr is a distinct pipe and is never merged",
+                creation = "STARTUPINFOEX + PROC_THREAD_ATTRIBUTE_JOB_LIST (+ PROC_THREAD_ATTRIBUTE_HANDLE_LIST only for pipe custody), CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_DETACHED_PROCESS; no shell, no breakaway, no inherit-all fallback",
                 containment = "creation-time private Job Object, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, no breakaway, IsProcessInJob verified before resume; no post-create assignment or unsandboxed fallback",
                 resume = "ResumeThread accepts only a previous suspension count of exactly 1; observed 0 is reported as possibly externally resumed/runnable, positive counts >1 as still suspended, and injected values are marked simulated, never observed",
+            },
+            stdioCustody = new
+            {
+                defaultMode = "None (no standard handles, bInheritHandles=false)",
+                optInMode = "Pipes (stdin/stdout/stderr)",
+                inheritance = "bInheritHandles=true only with PROC_THREAD_ATTRIBUTE_HANDLE_LIST containing exactly the three child ends; child ends inheritable for the create call and closed immediately afterwards; parent ends never inheritable",
+                merging = "stdout and stderr are separate pipes; no merge or duplication",
+                launchConstraint = "Pipe-enabled launches serialize inside the owner process; arbitrary concurrent spawns must not run in the dedicated launcher because the three child ends are inheritable during the bounded create window",
             },
             cleanupSemantics = new
             {
@@ -231,16 +249,18 @@ internal static class TestRunner
             {
                 path = fixture.ExecutablePath,
                 probePath,
+                stdioProbePath,
                 witnessRoot = suiteRoot,
                 peer = "same synthetic image, launched outside the owner's containment boundary",
             },
             tests = results,
             limitations = new[]
             {
-                "The component is a native library/framework artifact; it is not installed, packaged or reachable from the host or relay.",
-                "Stdio pipes, ACL hardening and reparse-point checks are later slices; the environment is explicit but caller-supplied.",
-                "Creation-time job assignment requires Windows 10 1607 or later; this host is Windows 11 26200 x64. If the attribute API is unavailable, launch fails before process creation with Unsupported=true and no fallback.",
-                "Only the creation-time attribute failure and unsafe resume count are fault-injected; containment verification shares the rollback path but is not separately injected.",
+                "The component is a native library/framework artifact; it is not installed, packaged or reachable from the host or relay. No maintained Codex app-server or daemon is installed or bound.",
+                "Pipe custody is library-only and synchronous. It is not wired to the host, Codex app-server, relay or any remote command surface; ACL hardening and reparse-point checks remain later slices.",
+                "Pipe-enabled launches create three inheritable child ends for the bounded create window. The owner process must be a dedicated launcher; other arbitrary spawns must not run concurrently, and the implementation serializes pipe-enabled launches but cannot stop unrelated code from calling inherit-all spawn APIs.",
+                "Creation-time job assignment requires Windows 10 1607 or later; this host is Windows 11 26200 x64. If the attribute API is unavailable, launch fails before process creation with Unsupported=true and no fallback. A real host rejection is not exercised; the suite injects the boundary failure.",
+                "Only the creation-time attribute failure, explicit stdio handle-list failure and unsafe resume count are fault-injected; containment verification shares the rollback path but is not separately injected. The resume test injects count 2 and checks record semantics; observed 0, observed >1 and ResumeThread-error branches are not independently executed.",
                 "The synthetic fixtures are same-user; cross-user and AppContainer containment are not covered.",
                 "Console hosts allocated by owned children are contained and killed with the job; a child that deliberately attaches to an unrelated console is out of scope.",
                 "The library accepts any absolute .exe and environment policy from its caller by design; production must enforce the project and launch-profile allowlist outside this component.",
@@ -257,12 +277,13 @@ internal static class TestRunner
         string? scratch = null;
         string? receipt = null;
         string? probe = null;
+        string? stdioProbe = null;
         for (var index = 0; index < args.Length; index++)
         {
             var name = args[index];
-            if (name is not ("--fixture" or "--scratch" or "--receipt" or "--probe"))
+            if (name is not ("--fixture" or "--scratch" or "--receipt" or "--probe" or "--stdio-probe"))
             {
-                throw new ArgumentException($"Unknown option '{name}'. Expected --fixture, --scratch, --receipt, --probe.");
+                throw new ArgumentException($"Unknown option '{name}'. Expected --fixture, --scratch, --receipt, --probe, --stdio-probe.");
             }
 
             if (index + 1 >= args.Length)
@@ -285,12 +306,15 @@ internal static class TestRunner
                 case "--probe":
                     probe = value;
                     break;
+                case "--stdio-probe":
+                    stdioProbe = value;
+                    break;
             }
         }
 
-        if (fixture is null || scratch is null || receipt is null || probe is null)
+        if (fixture is null || scratch is null || receipt is null || probe is null || stdioProbe is null)
         {
-            throw new ArgumentException("--fixture, --scratch, --receipt and --probe are all required.");
+            throw new ArgumentException("--fixture, --scratch, --receipt, --probe and --stdio-probe are all required.");
         }
 
         Directory.CreateDirectory(scratch);
@@ -300,10 +324,10 @@ internal static class TestRunner
             Directory.CreateDirectory(receiptDirectory);
         }
 
-        return new Options(fixture, scratch, receipt, probe);
+        return new Options(fixture, scratch, receipt, probe, stdioProbe);
     }
 
-    private sealed record Options(string FixturePath, string ScratchDirectory, string ReceiptPath, string ProbePath);
+    private sealed record Options(string FixturePath, string ScratchDirectory, string ReceiptPath, string ProbePath, string StdioProbePath);
 }
 
 /// <summary>

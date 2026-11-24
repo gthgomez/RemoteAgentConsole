@@ -3,9 +3,11 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,11 +25,12 @@ internal sealed record SupervisorEvidence(
 
 internal sealed class ScenarioContext
 {
-    internal ScenarioContext(FixtureControl fixture, string suiteWitnessRoot, string probePath)
+    internal ScenarioContext(FixtureControl fixture, string suiteWitnessRoot, string probePath, string stdioProbePath)
     {
         Fixture = fixture;
         SuiteWitnessRoot = suiteWitnessRoot;
         ProbePath = probePath;
+        StdioProbePath = stdioProbePath;
         PolicyTempDirectory = Path.Combine(suiteWitnessRoot, "policy temp");
         Directory.CreateDirectory(PolicyTempDirectory);
     }
@@ -37,6 +40,8 @@ internal sealed class ScenarioContext
     internal string SuiteWitnessRoot { get; }
 
     internal string ProbePath { get; }
+
+    internal string StdioProbePath { get; }
 
     internal string PolicyTempDirectory { get; }
 
@@ -179,6 +184,7 @@ internal static class WindowsLaunchScenarios
         {
             owned = LaunchRoot(context, witness, checks);
             var root = WaitForRoot(witness, owned, checks);
+            checks.True(owned.StandardStreams is null, "no-stdio default exposes no parent pipe custody");
 
             checks.True(
                 (owned.JobLimitFlags & NativeMethods.JobObjectLimitKillOnJobClose) != 0,
@@ -622,6 +628,217 @@ internal static class WindowsLaunchScenarios
         }
     }
 
+    internal static void StdioPipesCheck(ScenarioContext context, Checks checks)
+    {
+        var witness = context.FreshWitnessDirectory("stdio-pipes träd 树");
+        var sentinel = CreateInheritableSentinel();
+        try
+        {
+            if (sentinel == IntPtr.Zero)
+            {
+                checks.True(false, $"could not create the inheritable sentinel event (Win32 error {Marshal.GetLastWin32Error()})");
+                return;
+            }
+
+            RunPipedExchange(context, witness, sentinel, eofMode: false, checks, "request-response");
+            RunPipedExchange(context, witness, sentinel, eofMode: true, checks, "eof");
+        }
+        finally
+        {
+            if (sentinel != IntPtr.Zero)
+            {
+                _ = CloseHandle(sentinel);
+            }
+        }
+    }
+
+    private static void RunPipedExchange(
+        ScenarioContext context,
+        string witness,
+        IntPtr sentinel,
+        bool eofMode,
+        Checks checks,
+        string label)
+    {
+        var sentinelOutput = Path.Combine(witness, $"sentinel-{label}.txt");
+        var arguments = new[]
+        {
+            "--sentinel-out",
+            sentinelOutput,
+            "--sentinel-handle",
+            sentinel.ToInt64().ToString(CultureInfo.InvariantCulture),
+        };
+
+        OwnedProcess? owned = null;
+        try
+        {
+            var contract = LaunchContract.Create(
+                context.StdioProbePath,
+                Path.GetDirectoryName(context.StdioProbePath)!,
+                arguments,
+                EnvironmentPolicy.Minimal(context.PolicyTempDirectory));
+
+            owned = WindowsProcessOwner.Launch(contract, SettlementBound, ChildStdioMode.Pipes);
+            checks.True(owned.StandardStreams is not null, $"{label}: pipe custody is exposed when opted in");
+            var streams = owned.StandardStreams
+                ?? throw new InvalidOperationException("Pipe custody was requested but no streams were returned.");
+            checks.True(IsNonInheritable(streams.StandardInput), $"{label}: parent stdin end is non-inheritable");
+            checks.True(IsNonInheritable(streams.StandardOutput), $"{label}: parent stdout end is non-inheritable");
+            checks.True(IsNonInheritable(streams.StandardError), $"{label}: parent stderr end is non-inheritable");
+
+            using var standardInput = new StreamWriter(streams.StandardInput, Encoding.ASCII)
+            {
+                AutoFlush = true,
+                NewLine = "\n",
+            };
+            using var standardOutput = new StreamReader(streams.StandardOutput, Encoding.ASCII);
+            using var standardError = new StreamReader(streams.StandardError, Encoding.ASCII);
+
+            checks.True(
+                FixtureControl.WaitUntil(
+                    () => File.Exists(sentinelOutput) && ReadTextIfAvailable(sentinelOutput) == "absent",
+                    StartupBound),
+                $"{label}: unrelated inheritable sentinel handle was not inherited");
+            if (File.Exists(sentinelOutput))
+            {
+                checks.Equal("absent", ReadTextIfAvailable(sentinelOutput), $"{label}: sentinel evidence");
+            }
+
+            standardInput.WriteLine("PING");
+            var pong = ReadLineBounded(standardOutput, $"{label}: stdout");
+            var errorLine = ReadLineBounded(standardError, $"{label}: stderr");
+            checks.Equal("PONG", pong, $"{label}: fixed ASCII response");
+            checks.Equal("STDERR-MARKER", errorLine, $"{label}: distinct stderr line");
+            checks.True(!string.Equals(pong, errorLine, StringComparison.Ordinal), $"{label}: stdout and stderr are distinct");
+
+            if (eofMode)
+            {
+                standardInput.Dispose();
+                checks.Equal("EOF", ReadLineBounded(standardOutput, $"{label}: EOF response"), $"{label}: stdin EOF is observed");
+            }
+            else
+            {
+                standardInput.WriteLine("BYE");
+                checks.Equal("BYE-OK", ReadLineBounded(standardOutput, $"{label}: shutdown response"), $"{label}: fixed shutdown response");
+            }
+
+            checks.True(owned.WaitForExit(SettlementBound), $"{label}: child exits without hanging");
+            checks.True(owned.ExitCode == 0, $"{label}: child exit code");
+            checks.True(owned.TrySettle(TimeSpan.FromSeconds(10)), $"{label}: child job settles after pipe shutdown");
+        }
+        finally
+        {
+            ForceCleanup(owned);
+        }
+    }
+
+    private static string ReadLineBounded(StreamReader reader, string label)
+    {
+        var task = Task.Run(() => reader.ReadLine());
+        if (!task.Wait(StartupBound))
+        {
+            throw new TimeoutException($"{label} did not produce a bounded line within {StartupBound.TotalSeconds:0} seconds.");
+        }
+
+        return task.Result ?? throw new EndOfStreamException($"{label} closed before a line was received.");
+    }
+
+    private static string? ReadTextIfAvailable(string path)
+    {
+        try
+        {
+            return File.ReadAllText(path).Trim();
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsNonInheritable(Stream stream)
+    {
+        return stream is FileStream fileStream
+            && GetHandleInformation(fileStream.SafeFileHandle.DangerousGetHandle(), out var flags)
+            && (flags & 1) == 0;
+    }
+
+    private static IntPtr CreateInheritableSentinel()
+    {
+        var attributes = new NativeSecurityAttributes
+        {
+            Length = Marshal.SizeOf<NativeSecurityAttributes>(),
+            InheritHandle = 1,
+        };
+        return CreateEventW(ref attributes, manualReset: false, initialState: false, name: null);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeSecurityAttributes
+    {
+        internal int Length;
+        internal IntPtr SecurityDescriptor;
+        internal int InheritHandle;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateEventW(
+        ref NativeSecurityAttributes attributes,
+        [MarshalAs(UnmanagedType.Bool)] bool manualReset,
+        [MarshalAs(UnmanagedType.Bool)] bool initialState,
+        string? name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetHandleInformation(IntPtr handle, out uint flags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
+    internal static void StdioHandleListFailure(ScenarioContext context, Checks checks)
+    {
+        var witness = context.FreshWitnessDirectory("stdio-handle-list-failure träd 树");
+        var previous = LaunchDiagnostics.CreateHandleListFailure;
+        try
+        {
+            LaunchDiagnostics.CreateHandleListFailure = NativeMethods.ErrorInvalidParameter;
+            var contract = LaunchContract.Create(
+                context.StdioProbePath,
+                Path.GetDirectoryName(context.StdioProbePath)!,
+                Array.Empty<string>(),
+                EnvironmentPolicy.Minimal(context.PolicyTempDirectory));
+
+            LaunchFailureException? failure = null;
+            try
+            {
+                using var owned = WindowsProcessOwner.Launch(
+                    contract,
+                    SettlementBound,
+                    ChildStdioMode.Pipes);
+            }
+            catch (LaunchFailureException error)
+            {
+                failure = error;
+            }
+
+            checks.True(failure is not null, "explicit handle-list failure is reported");
+            if (failure is null)
+            {
+                return;
+            }
+
+            checks.Equal(LaunchStage.CreateHandleList, failure.Stage, "explicit handle-list failure stage");
+            checks.Equal(NativeMethods.ErrorInvalidParameter, failure.Win32Error, "explicit handle-list failure error");
+            checks.True(!failure.Unsupported, "explicit handle-list failure is not the unsupported OS-attribute result");
+            checks.True(failure.Cleanup is null, "explicit handle-list failure creates no process or rollback evidence");
+
+            Thread.Sleep(500);
+            checks.EmptyDirectory(witness, "explicit handle-list failure never ran child code");
+        }
+        finally
+        {
+            LaunchDiagnostics.CreateHandleListFailure = previous;
+        }
+    }
     internal static void NoStart(ScenarioContext context, Checks checks)
     {
         var witness = context.FreshWitnessDirectory("no-start träd 树");

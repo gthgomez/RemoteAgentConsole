@@ -2,6 +2,7 @@
 
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace RemoteAgentConsole.WindowsLaunch;
 
@@ -33,12 +34,21 @@ public static class WindowsProcessOwner
     /// </summary>
     /// <param name="contract">The owner-qualified executable/argv/environment contract.</param>
     /// <param name="settlementTimeout">Default bound used by later stop/settle calls.</param>
+    /// <param name="stdio">Optional explicit stdin/stdout/stderr pipe custody; default is no stdio.</param>
     /// <returns>The resumed, contained owner.</returns>
     /// <exception cref="LaunchContractException">The contract was rejected before any native call.</exception>
     /// <exception cref="LaunchFailureException">A stage failed; see <see cref="LaunchFailureException.Cleanup"/> and <see cref="LaunchFailureException.Unsupported"/>.</exception>
-    public static OwnedProcess Launch(LaunchContract contract, TimeSpan? settlementTimeout = null)
+    public static OwnedProcess Launch(
+        LaunchContract contract,
+        TimeSpan? settlementTimeout = null,
+        ChildStdioMode stdio = ChildStdioMode.None)
     {
         ArgumentNullException.ThrowIfNull(contract);
+        if (stdio is not (ChildStdioMode.None or ChildStdioMode.Pipes))
+        {
+            throw new ArgumentOutOfRangeException(nameof(stdio), stdio, "Unsupported child stdio mode.");
+        }
+
         var bounded = OwnedProcess.NormalizeTimeout(
             settlementTimeout,
             nameof(settlementTimeout),
@@ -47,10 +57,24 @@ public static class WindowsProcessOwner
         SafeJobHandle? job = null;
         SafeProcessHandle? process = null;
         SafeThreadHandle? thread = null;
+        StdioPipes? pipes = null;
+        ChildStandardStreams? streams = null;
+        var inheritanceWindow = stdio == ChildStdioMode.Pipes ? StdioPipes.InheritanceWindow : null;
+        if (inheritanceWindow is not null)
+        {
+            Monitor.Enter(inheritanceWindow);
+        }
+
         try
         {
             job = JobObject.CreateKillOnClose();
-            using var attributes = JobListAttributes.Create(job);
+            if (stdio == ChildStdioMode.Pipes)
+            {
+                pipes = StdioPipes.Create();
+                streams = pipes.CreateParentStreams();
+            }
+
+            using var attributes = JobListAttributes.Create(job, pipes?.ChildHandles);
 
             var startup = new NativeMethods.StartupInfoEx
             {
@@ -60,6 +84,14 @@ public static class WindowsProcessOwner
                 },
                 AttributeList = attributes.Pointer,
             };
+
+            if (pipes is not null)
+            {
+                startup.StartupInfo.Flags = NativeMethods.StartfUseStdHandles;
+                startup.StartupInfo.StandardInput = pipes.ChildHandles[0];
+                startup.StartupInfo.StandardOutput = pipes.ChildHandles[1];
+                startup.StartupInfo.StandardError = pipes.ChildHandles[2];
+            }
 
             var commandLine = IntPtr.Zero;
             var environment = IntPtr.Zero;
@@ -73,7 +105,7 @@ public static class WindowsProcessOwner
                     commandLine,
                     IntPtr.Zero,
                     IntPtr.Zero,
-                    inheritHandles: false,
+                    inheritHandles: pipes is not null,
                     NativeMethods.CreateSuspended
                         | NativeMethods.CreateUnicodeEnvironment
                         | NativeMethods.CreateDetachedProcess
@@ -88,9 +120,10 @@ public static class WindowsProcessOwner
                     throw new LaunchFailureException(
                         LaunchStage.CreateProcess,
                         Marshal.GetLastWin32Error(),
-                        "CreateProcessW failed with creation-time job assignment; no process was created and no fallback launch was attempted.");
+                        "CreateProcessW failed with creation-time job assignment and explicit handle custody; no process was created and no fallback launch was attempted.");
                 }
 
+                pipes?.CloseChildEnds();
                 process = new SafeProcessHandle(information.Process);
                 thread = new SafeThreadHandle(information.Thread);
 
@@ -189,7 +222,10 @@ public static class WindowsProcessOwner
                 thread.Dispose();
                 thread = null;
 
-                var owned = new OwnedProcess(process, job, unchecked((int)information.ProcessId), bounded);
+                var owned = new OwnedProcess(process, job, unchecked((int)information.ProcessId), bounded, streams);
+                pipes?.Dispose();
+                pipes = null;
+                streams = null;
                 process = null;
                 job = null;
                 return owned;
@@ -209,9 +245,15 @@ public static class WindowsProcessOwner
         }
         finally
         {
+            streams?.Dispose();
+            pipes?.Dispose();
             thread?.Dispose();
             process?.Dispose();
             job?.Dispose();
+            if (inheritanceWindow is not null)
+            {
+                Monitor.Exit(inheritanceWindow);
+            }
         }
     }
 
@@ -310,6 +352,9 @@ internal static class LaunchDiagnostics
 {
     /// <summary>Simulates a creation-time attribute-list failure before any process exists.</summary>
     internal static int? CreateJobListFailure { get; set; }
+
+    /// <summary>Simulates an explicit stdio handle-list failure before CreateProcess.</summary>
+    internal static int? CreateHandleListFailure { get; set; }
 
     /// <summary>
     /// Simulates an unsafe previous suspension count. The real ResumeThread call is not

@@ -11,5 +11,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\RemoteAgentConsole.WindowsLaunch\RemoteAgentConsole.WindowsLaunch.csproj" />
     <ProjectReference Include="..\RemoteAgentConsole.WindowsLaunch.EnvironmentProbe\RemoteAgentConsole.WindowsLaunch.EnvironmentProbe.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\RemoteAgentConsole.WindowsLaunch.StdioProbe\RemoteAgentConsole.WindowsLaunch.StdioProbe.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>
