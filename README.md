@@ -69,3 +69,13 @@ pnpm build
 ## Architecture
 
 See [docs/CAMPAIGN.md](docs/CAMPAIGN.md) for the active milestone, scope, and architectural invariants. The web client talks to the local host API; ACP protocol details stay in the host-side ACP client.
+
+## Archive legacy history
+
+Use Node 24 and a self-contained SQLite backup from a stopped or checkpointed legacy host. Choose an output directory accessible only to the local owner.
+
+```sh
+node tools/export-rac-history.mjs --source-copy backup.sqlite --output history.jsonl
+```
+
+The archive records the backup SHA-256 and counts for projects, sessions, chronological turns and events, and historical permission decisions. Device credentials, pairing state, pending permission rows and operation keys are excluded. Keep the archive as a local record during migration.
