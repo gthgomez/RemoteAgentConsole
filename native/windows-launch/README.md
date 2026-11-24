@@ -36,7 +36,10 @@ The launch sequence is fixed and ordered:
 The process is assigned to the job by the kernel at creation time. There is **no
 post-create `AssignProcessToJobObject`** and no unsandboxed fallback. If the attribute
 API is unavailable or rejects the job list, launch fails before any process exists with
-`LaunchFailureException.Unsupported = true` and `Stage = CreateJobAssignment`.
+`LaunchFailureException.Unsupported = true` and `Stage = CreateJobAssignment`. The
+qualification suite's `creation-time-assignment-failure` case injects that failure at
+the attribute boundary; it does **not** prove that a real host rejects the OS attribute,
+which remains an OS-dependent path the lead must run on the target host.
 
 `OwnedProcess.KillAndSettle` terminates the exact root handle, terminates the job,
 and waits within a bound for job accounting to reach zero. `Dispose` closes the job, so
@@ -50,7 +53,7 @@ image name, enumerates processes, or signals a process outside the job.
 | Executable | owner-qualified absolute `.exe` only |
 | Arguments | owner-qualified fixed argv only |
 | Environment | required explicit frozen block; no ambient read, merge or expansion |
-| Stdio | not redirected yet (pipe wiring is a later slice) |
+| Stdio | not redirected; no stdio API or host wiring is exposed, so there is no reachable agent runtime path in this slice |
 | Console | no console/window is allocated for the root |
 | Containment | creation-time private job, kill-on-close, no breakaway |
 | Resume | observed previous suspension count must be exactly 1; observed 0 is unknown/externally runnable, injected values are simulated |
@@ -93,11 +96,14 @@ pwsh qualification/windows/launch-ownership-fixture.ps1 -ExpectedCommit $commit 
 
 `-ExpectedCommit` is required and must be the full 40-hex commit being bound. The caller
 chooses the scratch root; the default is a portable directory under the current user's
-temporary path, not a machine-specific repository path. `-AllowOtherCommit` is only for
-an intentional rebase and records a commit mismatch. Dirty scoped inputs (modified or
-untracked files under `native/windows-launch`, the qualification script, or the fixture)
-are recorded truthfully in `receipt.json` along with their hashes; a clean published
-commit produces a clean binding.
+temporary path, not a machine-specific repository path. `-AllowOtherCommit` permits a
+diagnostic mismatch but cannot produce an attested `PASS`. The script records the initial
+`HEAD` tree and initial hashes for the existing scoped inputs (`native/windows-launch`,
+this script, and the process-tree fixture); before declaring `PASS` it re-reads the commit,
+tree and scoped hashes and fails if any changed. Dirty scoped inputs (modified or
+untracked files under those paths) are recorded truthfully in `receipt.json` along with
+their hashes; a clean published commit produces a clean binding. No broader worktree
+sweep is performed.
 
 The script:
 
@@ -105,7 +111,9 @@ The script:
 - scans the production sources for forbidden process-control, ambient-environment and
   network patterns, and for any post-create job assignment;
 - builds the synthetic fixture and the library/runner/probe with one MSBuild job at a
-  time into a unique scratch directory (no repository `bin`/`obj`, no package restore);
+  time into a unique scratch directory (no repository `bin`/`obj`; no `PackageReference`
+  items exist, so no external package is declared. `dotnet build` may still run an
+  implicit restore for framework and reference packs from the installed SDK);
 - runs the conformance suite in Unicode paths containing spaces;
 - writes `receipt.json` (hashes, environment, per-test evidence, limitations) next to
   the build artifacts.
@@ -131,10 +139,12 @@ Scratch output is created under the caller-supplied scratch root, for example
   parent kills only the exact supervisor handle and verifies the owned descendants
   settle while the same-image peer survives;
 - **creation-time fault injection**: `Unsupported = true` before any process exists,
-  with an empty witness directory;
-- **resume guard**: an injected unsafe previous suspension count is marked simulated and
-  rolled back without resuming the process or running child code; observed 0, observed
-  positive counts and ResumeThread failure are reported distinctly;
+  with an empty witness directory. This is an injected attribute-boundary failure, not
+  a demonstrated real host rejection;
+- **resume guard**: the launcher test injects an unsafe previous suspension count,
+  asserts the injected/observed record flags and record-level semantics, and rolls back
+  without running child code. The observed-0, observed-positive and `ResumeThread`-error
+  branches are implemented and typed but are not independently executed by this suite;
 - **environment policy**: the synthetic probe sees exactly the explicit policy, with
   no ambient sentinel, `PATH` or `USERPROFILE` propagation;
 - no start: missing executable and missing working directory produce staged failures
@@ -149,13 +159,23 @@ Scratch output is created under the caller-supplied scratch root, for example
   MSIX, service, scheduled task or per-machine installation.
 - Creation-time job assignment requires Windows 10 1607 or later. It is qualified on
   Windows 10.0.26200 x64; if the OS rejects or lacks the attribute API, launch fails
-  before process creation and no fallback is attempted.
+  before process creation and no fallback is attempted. A real host rejection of the
+  attribute API is **not** exercised; only the injected boundary failure is.
 - Stdio pipes, ACL hardening, reparse-point checks, code signing, upgrade/rollback and
-  host integration are later slices.
+  host integration are later slices. No stdio API or host wiring is exposed, so this
+  slice has no reachable agent launch path.
 - Only the creation-time attribute failure and the unsafe resume count are
-  fault-injected; injected resume values are labelled simulated and never treated as an
-  OS observation. Containment verification shares the same rollback routine but is not
-  separately injected.
+  fault-injected. The resume test injects count `2` and checks the injected/observed
+  flags plus record-level semantics; observed `0`, observed positive counts and a real
+  `ResumeThread` failure are not independently executed. Injected resume values are
+  labelled simulated and never treated as an OS observation. Containment verification
+  shares the same rollback routine but is not separately injected.
+- `dotnet build` may run an implicit restore for framework/reference packs from the
+  installed SDK. There are no `PackageReference` items in this slice, so no external
+  package is declared.
+- Attested `PASS` requires the exact expected commit, a stable `HEAD` tree, and stable
+  hashes for the scoped source/script inputs recorded at start. Dirty scoped inputs are
+  hashed and recorded truthfully, but they are not a clean publication state.
 - Same-user synthetic fixtures only; cross-user, AppContainer and restricted-token
   containment are not covered.
 - Console hosts allocated by owned children are contained and killed with the job; a

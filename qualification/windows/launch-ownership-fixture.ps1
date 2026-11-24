@@ -11,7 +11,8 @@
     This script does not install anything, register a service or task, change machine
     configuration, touch the repository working tree, or run the product monorepo
     build. Builds use one MSBuild job at a time and are redirected away from the
-    repository with --artifacts-path.
+    repository with --artifacts-path. The receipt binds the initial HEAD tree and the
+    initial scoped source/script hashes, then verifies they are unchanged before PASS.
 
 .PARAMETER RepoRoot
     Repository root. Defaults to the worktree containing this script.
@@ -24,8 +25,8 @@
     Required full 40-hex commit to bind. Pass the published commit being qualified.
 
 .PARAMETER AllowOtherCommit
-    Permit a HEAD that differs from the explicit -ExpectedCommit. Only for an
-    intentional rebase; the mismatch is recorded in the receipt.
+    Permit a HEAD that differs from the explicit -ExpectedCommit for diagnostics only;
+    the mismatch is recorded and cannot produce an attested PASS.
 
 .PARAMETER SkipSourceScan
     Skip the forbidden-API scan of the production library sources.
@@ -78,6 +79,14 @@ $script:scopedStatusLines = @()
 $script:modifiedInputs = @()
 $script:untrackedInputs = @()
 $script:inputsDirty = $null
+$script:initialHeadTree = $null
+$script:finalHeadTree = $null
+$script:finalHeadCommit = $null
+$script:headTreeStable = $null
+$script:initialScopedInputs = @()
+$script:finalScopedInputs = @()
+$script:scopedInputsStable = $null
+$script:attested = $false
 
 function Get-Sha256 {
     param([Parameter(Mandatory)][string]$Path)
@@ -120,6 +129,55 @@ function Invoke-Build {
     }
 
     return $text
+}
+
+function Get-ScopedInputRecords {
+    # Existing publication scope only: native component, this script, and the fixture.
+    $records = @()
+    $nativeRoot = Join-Path $RepoRoot 'native/windows-launch'
+    if (Test-Path -LiteralPath $nativeRoot -PathType Container) {
+        $records += @(Get-ChildItem -LiteralPath $nativeRoot -Recurse -File |
+            Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } |
+            ForEach-Object { Get-FileRecord -Path $_.FullName -BasePath $RepoRoot -Kind 'scoped-input' })
+    }
+
+    foreach ($relativePath in @(
+            'qualification/windows/launch-ownership-fixture.ps1',
+            'qualification/windows/process-tree-fixture.cs')) {
+        $path = Join-Path $RepoRoot $relativePath
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $records += Get-FileRecord -Path $path -BasePath $RepoRoot -Kind 'scoped-input'
+        }
+    }
+
+    return @($records | Sort-Object relativePath)
+}
+
+function Test-ScopedInputsUnchanged {
+    param(
+        [object[]]$Initial,
+        [object[]]$Final
+    )
+
+    if ($Initial.Count -ne $Final.Count) {
+        return $false
+    }
+
+    $initialHashes = @{}
+    foreach ($record in $Initial) {
+        $initialHashes[$record.relativePath] = $record.sha256
+    }
+
+    foreach ($record in $Final) {
+        if (-not $initialHashes.ContainsKey($record.relativePath)) {
+            return $false
+        }
+        if ($initialHashes[$record.relativePath] -ne $record.sha256) {
+            return $false
+        }
+    }
+
+    return $true
 }
 
 function Assert-ProductionSourceScan {
@@ -224,8 +282,13 @@ try {
         throw "git rev-parse failed in $RepoRoot"
     }
 
+    $script:initialHeadTree = (& git -C $RepoRoot rev-parse "$($script:head)^{tree}").Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($script:initialHeadTree)) {
+        throw "git rev-parse of the initial HEAD tree failed in $RepoRoot"
+    }
+
     if ($script:head -ne $script:boundCommit -and -not $AllowOtherCommit) {
-        throw "HEAD $($script:head) does not match the explicit expected commit $($script:boundCommit). Use -AllowOtherCommit only for an intentional rebase."
+        throw "HEAD $($script:head) does not match the explicit expected commit $($script:boundCommit). Use -AllowOtherCommit only for a diagnostic run; it cannot attest PASS."
     }
 
     $statusLines = @(& git -C $RepoRoot status --porcelain)
@@ -254,6 +317,11 @@ try {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
             throw "Required source file was not found: $required"
         }
+    }
+
+    $script:initialScopedInputs = @(Get-ScopedInputRecords)
+    if ($script:initialScopedInputs.Count -eq 0) {
+        throw "No scoped inputs were found for the initial binding."
     }
 
     if (-not $SkipSourceScan) {
@@ -349,7 +417,6 @@ try {
         throw "The conformance suite failed (exit $($script:suiteExit), $($failedTests.Count) failed test(s))."
     }
 
-    $script:status = 'PASS'
 
     $script:artifacts = @(
         (Get-FileRecord -Path $script:libraryDll -BasePath $runDir -Kind 'native-library-dll'),
@@ -370,6 +437,36 @@ try {
             Sort-Object FullName |
             ForEach-Object { Get-FileRecord -Path $_.FullName -BasePath $RepoRoot -Kind 'source' }
     )
+    # Bind the initial commit tree and initial scoped source/script hashes, then
+    # re-read them immediately before any attested PASS. This is the existing
+    # publication scope, not a broad worktree sweep.
+    $finalHead = (& git -C $RepoRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "git rev-parse of final HEAD failed in $RepoRoot"
+    }
+    $finalTree = (& git -C $RepoRoot rev-parse "$($finalHead)^{tree}").Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($finalTree)) {
+        throw "git rev-parse of the final HEAD tree failed in $RepoRoot"
+    }
+
+    $script:finalHeadCommit = $finalHead
+    $script:finalHeadTree = $finalTree
+    $script:headTreeStable = ($finalHead -eq $script:head) -and ($finalTree -eq $script:initialHeadTree)
+    $script:finalScopedInputs = @(Get-ScopedInputRecords)
+    $script:scopedInputsStable = Test-ScopedInputsUnchanged -Initial $script:initialScopedInputs -Final $script:finalScopedInputs
+
+    if (-not $script:headTreeStable) {
+        throw "HEAD commit or tree changed during qualification; initial=$($script:head)/$($script:initialHeadTree) final=$finalHead/$finalTree."
+    }
+    if (-not $script:scopedInputsStable) {
+        throw "Scoped source/script hashes changed during qualification; the binding is not stable."
+    }
+    if ($script:head -ne $script:boundCommit) {
+        throw "Attested qualification requires HEAD to equal the exact expected commit $($script:boundCommit); this run is diagnostic only."
+    }
+
+    $script:attested = $true
+    $script:status = 'PASS'
 }
 catch {
     $script:status = 'FAIL'
@@ -393,7 +490,16 @@ finally {
         expectedBaseCommit = $script:boundCommit
         baseMatchesExpected = ($script:head -eq $script:boundCommit)
         commitBinding = if (-not $script:head -or -not $script:boundCommit) { 'unbound' } elseif ($script:head -eq $script:boundCommit) { 'exact' } elseif ($AllowOtherCommit) { 'mismatch-allowed' } else { 'unbound' }
+        attested = $script:attested
+        initialHeadTree = $script:initialHeadTree
+        finalHeadCommit = $script:finalHeadCommit
+        finalHeadTree = $script:finalHeadTree
+        headTreeStable = $script:headTreeStable
+        scopedInputsStable = $script:scopedInputsStable
+        initialScopedInputs = @($script:initialScopedInputs)
+        finalScopedInputs = @($script:finalScopedInputs)
         inputsDirty = $script:inputsDirty
+        cleanInputs = ($script:inputsDirty -eq $false)
         scopedWorkingTreeStatus = @($script:scopedStatusLines)
         modifiedInputs = @($script:modifiedInputs)
         untrackedInputs = @($script:untrackedInputs)
@@ -406,7 +512,8 @@ finally {
             hostOrRelayReference = $false
             serviceSchedulerOrInstaller = $false
             networkListener = $false
-            note = 'First slice only. Nothing under apps/ or packages/ references this library; no machine configuration is changed.'
+            stdioReachable = $false
+            note = 'First slice only. Nothing under apps/ or packages/ references this library; no stdio handles or host wiring are exposed, so there is no reachable agent launch path. No machine configuration is changed.'
         }
         host = [ordered]@{
             os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
@@ -420,6 +527,10 @@ finally {
         workingTreeStatus = @($statusLines)
         containment = 'Creation-time STARTUPINFOEX/PROC_THREAD_ATTRIBUTE_JOB_LIST plus JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; no post-create assignment and no unsandboxed fallback.'
         resumeSemantics = 'ResumeThread accepts exactly the observed previous count 1; observed 0 is unknown/externally runnable, observed >1 remains suspended, injected values are marked simulated and never treated as observed.'
+        resumeTestCoverage = 'The launcher test injects count 2 and asserts injected/observed flags plus record-level semantics; observed 0, observed >1 and ResumeThread-error branches are not independently executed.'
+        unsupportedTestCoverage = 'The creation-time assignment failure is injected before CreateProcess; a real host rejection of PROC_THREAD_ATTRIBUTE_JOB_LIST is not exercised by this suite.'
+        buildRestore = 'dotnet build may run an implicit restore for framework/reference packs from the installed SDK; this slice declares no PackageReference and no external package.'
+        stdioReachability = 'No stdio pipes or host wiring are exposed; this component is not a reachable agent launch path.'
         cleanupSemantics = 'Exit is confirmed only by a bounded wait on the exact handle; AccessDenied termination results are recorded as suggestions and never set confirmed flags.'
         environment = 'Required frozen caller-supplied Unicode environment block; no ambient environment read or merge.'
         sourceScan = $script:sourceScan
@@ -430,10 +541,11 @@ finally {
         testReceiptPath = $testReceipt
         testOutputPath = $suiteLog
         limitations = @(
-            'The component is a DLL/framework artifact; it is not packaged, installed, signed or reachable from the host or relay.'
-            'Stdio pipes, ACL hardening and reparse-point checks are later slices; the environment is explicit but caller-supplied.'
-            'Creation-time job assignment uses STARTUPINFOEX/PROC_THREAD_ATTRIBUTE_JOB_LIST (Windows 10 1607+). If unavailable, launch fails before process creation with Unsupported=true; no post-create assignment or unsandboxed fallback exists.'
+            'The component is a DLL/framework artifact; it is not packaged, installed, signed or reachable from the host or relay. No stdio pipes or host wiring are exposed.'
+            'dotnet build may run an implicit restore for framework/reference packs from the installed SDK; there is no PackageReference and no external package is declared.'
+            'Creation-time job assignment uses STARTUPINFOEX/PROC_THREAD_ATTRIBUTE_JOB_LIST (Windows 10 1607+). The suite injects the attribute-boundary failure before CreateProcess; a real host rejection of the OS attribute is not exercised. If the real API is unavailable, launch fails before process creation with Unsupported=true; no post-create assignment or unsandboxed fallback exists.'
             'Only creation-time attribute failure and unsafe resume count are fault-injected; containment verification shares the rollback path but is not separately injected.'
+            'The launcher test injects resume count 2 and asserts injected/observed flags plus record-level semantics; observed 0, observed >1 and ResumeThread-error branches are not independently executed.'
             'The environment is an explicit frozen caller-supplied policy; the library reads no ambient environment. The caller must include required variables such as SystemRoot and must not include live credentials.'
             'ResumeThread accepts only a previous suspension count of exactly 1; any other count is rolled back before resumption.'
             'The library accepts any absolute .exe from its caller by design; production must enforce the project and launch-profile allowlist outside this component.'
@@ -441,6 +553,7 @@ finally {
             'Console hosts allocated by owned children are contained and killed with the job; deliberate attachment to an unrelated console is out of scope.'
             'Qualified on Windows 10.0.26200 x64; nested-job assignment assumes Windows 8 or later.'
             'No real Command Code/OpenCode/Happier process, phone or production packaging was exercised.'
+            'Attested PASS requires HEAD to equal the exact expected commit and requires the initial HEAD tree and scoped input hashes to remain unchanged; dirty inputs are recorded by hash but are not a clean publication state.'
         )
         packagingPrerequisites = @(
             'Publish win-x64 framework-dependent (requires .NET 8) or self-contained, and sign the resulting binaries.'
