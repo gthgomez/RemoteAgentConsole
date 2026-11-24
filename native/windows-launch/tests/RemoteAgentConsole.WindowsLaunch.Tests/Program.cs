@@ -227,6 +227,8 @@ internal static class TestRunner
                 inheritance = "bInheritHandles=true only with PROC_THREAD_ATTRIBUTE_HANDLE_LIST containing exactly the three child ends; child ends inheritable for the create call and closed immediately afterwards; parent ends never inheritable",
                 merging = "stdout and stderr are separate pipes; no merge or duplication",
                 launchConstraint = "Pipe-enabled launches serialize inside the owner process; arbitrary concurrent spawns must not run in the dedicated launcher because the three child ends are inheritable during the bounded create window",
+                shutdown = "Graceful shutdown is close/dispose stdin (EOF), bounded wait/settlement, then dispose OwnedProcess/streams. Dispose alone is forced cleanup via job close/kill-on-close.",
+                sentinelEvidence = "The unrelated-handle sentinel check is behavioral and numeric-handle based; a handle-value collision can cause a false failure only, never a false pass.",
             },
             cleanupSemantics = new
             {

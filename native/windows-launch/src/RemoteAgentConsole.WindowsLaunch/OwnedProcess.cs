@@ -171,7 +171,9 @@ public sealed class OwnedProcess : IDisposable
     /// <summary>
     /// Closes the Job Object (applying kill-on-close) and the exact process handle.
     /// Any still-running owned process is terminated by the kernel as a consequence;
-    /// no process outside the Job Object is touched.
+    /// no process outside the Job Object is touched. This is forced cleanup; for a
+    /// graceful pipe shutdown close <see cref="ChildStandardStreams.StandardInput"/>
+    /// first, wait for exit/settlement, then dispose the owner and streams.
     /// </summary>
     public void Dispose()
     {

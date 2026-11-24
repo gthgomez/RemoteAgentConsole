@@ -20,8 +20,11 @@ namespace RemoteAgentConsole.WindowsLaunch;
 /// </para>
 /// <para>
 /// There is no shell, no path or environment expansion, no ambient environment read, no
-/// inherited handles, no breakaway flag, no PID lookup, no image-name matching, no
-/// network listener and no installation step.
+/// inherited handles by default, no breakaway flag, no PID lookup, no image-name
+/// matching, no network listener and no installation step. With
+/// <see cref="ChildStdioMode.Pipes"/>, only the three explicit child stdin/stdout/stderr
+/// handles are inherited through <c>PROC_THREAD_ATTRIBUTE_HANDLE_LIST</c>; there is no
+/// inherit-all mode.
 /// </para>
 /// </remarks>
 public static class WindowsProcessOwner
@@ -87,7 +90,7 @@ public static class WindowsProcessOwner
 
             if (pipes is not null)
             {
-                startup.StartupInfo.Flags = NativeMethods.StartfUseStdHandles;
+                startup.StartupInfo.Flags |= NativeMethods.StartfUseStdHandles;
                 startup.StartupInfo.StandardInput = pipes.ChildHandles[0];
                 startup.StartupInfo.StandardOutput = pipes.ChildHandles[1];
                 startup.StartupInfo.StandardError = pipes.ChildHandles[2];

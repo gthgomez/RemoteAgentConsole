@@ -35,7 +35,10 @@ public sealed class ChildStandardStreams : IDisposable
         StandardError = standardError;
     }
 
-    /// <summary>Writable parent end for the child's stdin.</summary>
+    /// <summary>
+    /// Writable parent end for the child's stdin. Closing/disposing it delivers EOF;
+    /// graceful shutdown is EOF, bounded wait/settlement, then owner/stream disposal.
+    /// </summary>
     public Stream StandardInput { get; }
 
     /// <summary>Readable parent end for the child's stdout.</summary>

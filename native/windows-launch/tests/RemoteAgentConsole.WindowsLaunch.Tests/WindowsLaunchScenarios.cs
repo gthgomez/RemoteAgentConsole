@@ -70,6 +70,16 @@ internal static class WindowsLaunchScenarios
     {
         _ = context;
 
+        checks.Equal(0, (int)LaunchStage.Contract, "contract stage remains 0");
+        checks.Equal(1, (int)LaunchStage.CreateJob, "create-job stage remains 1");
+        checks.Equal(2, (int)LaunchStage.ConfigureJob, "configure-job stage remains 2");
+        checks.Equal(3, (int)LaunchStage.CreateJobAssignment, "job-assignment stage remains 3");
+        checks.Equal(4, (int)LaunchStage.CreateProcess, "create-process stage remains 4");
+        checks.Equal(5, (int)LaunchStage.VerifyContainment, "verify-containment stage remains 5");
+        checks.Equal(6, (int)LaunchStage.ResumePrimaryThread, "resume-thread stage remains 6");
+        checks.Equal(7, (int)LaunchStage.CreateStdio, "stdio stage is appended as 7");
+        checks.Equal(8, (int)LaunchStage.CreateHandleList, "handle-list stage is appended as 8");
+
         ExpectContractRejection(checks, "relative executable", () =>
             LaunchContract.Create("agent.exe", @"C:\Windows", Array.Empty<string>(), EmptyEnvironment));
 

@@ -251,7 +251,8 @@ function Assert-ProductionSourceScan {
         filesScanned = $files.Count
         patterns = @($patterns.Keys)
         requiredPatterns = @($requiredPatterns.Keys)
-        note = 'Library sources contain no PID/name process control, shell execution, breakaway flag, inherit-all spawn, network listener/socket, registry, service or scheduler surface, and no external package reference. Creation-time JOB_LIST and explicit HANDLE_LIST are both present; child standard handles are explicit and pipe ends are explicitly marked inheritable/non-inheritable.'
+        semantics = 'token-presence-only'
+        note = 'Token-presence scan only, not AST or semantic proof. Library sources contain no PID/name process control, shell execution, breakaway flag, inherit-all spawn, network listener/socket, registry, service or scheduler surface, and no external package reference. Creation-time JOB_LIST and explicit HANDLE_LIST tokens are both present; explicit child standard handles and pipe inheritable/non-inheritable setup tokens are present. Behavioral stdio tests provide runtime evidence.'
     }
 }
 
@@ -512,6 +513,7 @@ finally {
         baseMatchesExpected = ($script:head -eq $script:boundCommit)
         commitBinding = if (-not $script:head -or -not $script:boundCommit) { 'unbound' } elseif ($script:head -eq $script:boundCommit) { 'exact' } elseif ($AllowOtherCommit) { 'mismatch-allowed' } else { 'unbound' }
         attested = $script:attested
+        witnessClass = if (-not $script:attested) { 'unattested' } elseif ($script:inputsDirty) { 'stable-dirty-source' } else { 'clean-publication' }
         initialHeadTree = $script:initialHeadTree
         finalHeadCommit = $script:finalHeadCommit
         finalHeadTree = $script:finalHeadTree
@@ -556,6 +558,8 @@ finally {
         stdioCustody = 'Optional typed stdin/stdout/stderr pipes with explicit per-create PROC_THREAD_ATTRIBUTE_HANDLE_LIST; default none; child ends inheritable only for the create window; parent ends non-inheritable; stderr is a distinct pipe and is never merged.'
         stdioHostBinding = 'No host, maintained Codex app-server, daemon or remote binding is installed or exercised; pipe custody is library-only.'
         stdioTestCoverage = 'The synthetic child performs a bounded PING/PONG request, a distinct stderr line, BYE shutdown and an EOF shutdown; it also reports absence of an unrelated inheritable sentinel handle. Parent pipe ends are checked non-inheritable. An injected explicit-handle-list failure fails closed before child code. Pipe-enabled launches are serialized in the owner process during the inheritable create window.'
+        stdioSentinelSemantics = 'The sentinel check is behavioral and numeric-handle based. A handle-value collision can cause a false failure only; it cannot false-pass an inherited sentinel.'
+        stdioShutdownSemantics = 'Graceful shutdown is close/dispose StandardInput (EOF), bounded wait for child exit and job settlement, then dispose OwnedProcess/streams. Dispose alone is forced cleanup through job close and kill-on-close.'
         cleanupSemantics = 'Exit is confirmed only by a bounded wait on the exact handle; AccessDenied termination results are recorded as suggestions and never set confirmed flags.'
         environment = 'Required frozen caller-supplied Unicode environment block; no ambient environment read or merge.'
         sourceScan = $script:sourceScan

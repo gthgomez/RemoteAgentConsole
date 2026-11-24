@@ -4,8 +4,7 @@ Owner-only process ownership for the Remote Agent Console / Happier Windows
 composition. This is a **native library component plus a conformance runner and
 synthetic environment/stdin-stdout-stderr probes**, not an installed product. Nothing in
 `apps/` or `packages/` references it, and no maintained Codex app-server is installed or
-bound. Nothing in `apps/` or
-`packages/` references it, so it is not production reachable yet.
+bound, so it is not production reachable yet.
 
 ## What it does
 
@@ -51,6 +50,11 @@ window, parent ends are never inheritable, and stdout/stderr remain distinct. Pi
 launches serialize inside the owner process; the component must run in a dedicated owner
 launcher, and unrelated inherit-all spawns must not run concurrently. There is no
 inherit-all fallback.
+
+Graceful pipe shutdown is: close/dispose the parent `StandardInput` to deliver EOF, wait
+for the child to exit and the job to settle, then dispose `OwnedProcess` (and its
+streams). Calling `OwnedProcess.Dispose` alone is forced cleanup: it closes the job and
+applies kill-on-close rather than requesting a graceful shutdown.
 
 `OwnedProcess.KillAndSettle` terminates the exact root handle, terminates the job,
 and waits within a bound for job accounting to reach zero. `Dispose` closes the job, so
@@ -114,15 +118,18 @@ diagnostic mismatch but cannot produce an attested `PASS`. The script records th
 this script, and the process-tree fixture); before declaring `PASS` it re-reads the commit,
 tree and scoped hashes and fails if any changed. Dirty scoped inputs (modified or
 untracked files under those paths) are recorded truthfully in `receipt.json` along with
-their hashes; a clean published commit produces a clean binding. No broader worktree
-sweep is performed.
+their hashes; the derived `witnessClass` is `clean-publication` only for an attested run
+with no dirty scoped inputs, `stable-dirty-source` for an attested run with bound dirty
+inputs, and un-attested otherwise. No broader worktree sweep is performed.
 
 The script:
 
 - verifies the exact base commit and the Windows x64 / .NET 8+ host;
-- scans the production sources for forbidden process-control, ambient-environment,
-  inherit-all and network patterns, and requires both explicit `JOB_LIST` and
-  `HANDLE_LIST` plus explicit pipe inheritable/non-inheritable setup;
+- scans the production sources with a **token-presence only** scan for forbidden
+  process-control, ambient-environment, inherit-all and network patterns, and requires
+  both explicit `JOB_LIST` and `HANDLE_LIST` plus explicit pipe
+  inheritable/non-inheritable setup. Presence is not a semantic proof; the behavioral
+  stdio tests provide runtime evidence;
 - builds the synthetic fixture and the library/runner/probes with one MSBuild job at a
   time into a unique scratch directory (no repository `bin`/`obj`; no `PackageReference`
   items exist, so no external package is declared. `dotnet build` may still run an
@@ -163,9 +170,10 @@ Scratch output is created under the caller-supplied scratch root, for example
 - **stdio pipes**: with `ChildStdioMode.Pipes`, a harmless synthetic child performs a
   bounded fixed ASCII PING/PONG exchange, emits a distinct stderr marker, shuts down via
   `BYE`, and separately via stdin EOF. It also reports absence of an unrelated
-  inheritable sentinel handle, proving the explicit handle list did not fall back to
-  inherit-all; the default no-stdio launch exposes no streams. An injected explicit
-  handle-list failure fails closed before any child code runs;
+  inheritable sentinel handle as **behavioral evidence**; the numeric-handle check can
+  only false-fail on a handle-value collision, never false-pass an inherited sentinel.
+  The default no-stdio launch exposes no streams. An injected explicit handle-list
+  failure fails closed before any child code runs;
 - no start: missing executable and missing working directory produce staged failures
   with no process created;
 - unrelated same-image peer: outside the job, not a member, heartbeat continues
@@ -184,6 +192,17 @@ Scratch output is created under the caller-supplied scratch root, for example
   Codex app-server, daemon, relay or any remote command surface. ACL hardening,
   reparse-point checks, code signing, upgrade/rollback and host/Codex binding remain
   later slices, so this slice still has no production agent launch path.
+- Graceful shutdown is stdin EOF, bounded wait/settlement, then dispose. `Dispose` alone
+  is forced cleanup via job close/kill-on-close, not a graceful request.
+- The source scan is token-presence only, not AST or semantic proof. The stdio sentinel
+  check is behavioral and numeric-handle based; a handle-value collision can cause a
+  false failure only, never a false pass for an inherited sentinel.
+- Attested receipts distinguish a `stable-dirty-source` witness (exact commit/tree and
+  stable scoped hashes with uncommitted inputs) from a `clean-publication` witness
+  (no dirty scoped inputs). The derived witness class does not alter historical
+  attestation or weaken the exact-commit/hash checks.
+- Public `LaunchStage` numeric values 0-6 are preserved; `CreateStdio = 7` and
+  `CreateHandleList = 8` are appended and guarded by a type-initialization assertion.
 - Pipe-enabled launches create three inheritable child ends during the bounded create
   window. Run this component in a dedicated owner launcher; pipe-enabled launches are
   serialized, but unrelated inherit-all spawns in the same OS process are outside its

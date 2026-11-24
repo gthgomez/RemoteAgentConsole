@@ -19,20 +19,20 @@ public enum LaunchStage
     /// <summary>The creation-time job-assignment attribute list could not be built; nothing was launched.</summary>
     CreateJobAssignment = 3,
 
-    /// <summary>The optional stdio pipes or their explicit handle list could not be prepared; nothing was launched.</summary>
-    CreateStdio = 4,
-
-    /// <summary>The explicit inherited-handle list could not be configured; nothing was launched.</summary>
-    CreateHandleList = 5,
-
     /// <summary><c>CreateProcessW</c> failed; no process was created.</summary>
-    CreateProcess = 6,
+    CreateProcess = 4,
 
     /// <summary>The suspended process could not be confirmed as a Job Object member.</summary>
-    VerifyContainment = 7,
+    VerifyContainment = 5,
 
     /// <summary>The primary thread could not be resumed safely after containment was verified.</summary>
-    ResumePrimaryThread = 8,
+    ResumePrimaryThread = 6,
+
+    /// <summary>The optional stdio pipes could not be prepared; nothing was launched.</summary>
+    CreateStdio = 7,
+
+    /// <summary>The explicit inherited-handle list could not be configured; nothing was launched.</summary>
+    CreateHandleList = 8,
 }
 
 /// <summary>
