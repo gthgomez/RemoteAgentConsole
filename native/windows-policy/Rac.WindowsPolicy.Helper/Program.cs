@@ -9,6 +9,7 @@ internal static class Program
     private const int ExitInvalid = 2;
     private const int ExitDenied = 3;
     private const int ExitError = 4;
+    private const string ProjectDirectoryMode = "--project-directory-identity";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -21,14 +22,25 @@ internal static class Program
     {
         try
         {
-            if (args.Length != 1)
+            if (args.Length == 1)
             {
-                return EmitError(ExitInvalid, "usage");
+                if (string.Equals(args[0], ProjectDirectoryMode, StringComparison.Ordinal))
+                {
+                    return EmitError(ExitInvalid, "usage");
+                }
+
+                LaunchEnvironment.Validate();
+                return Emit(PolicyFileReader.Read(args[0]), ExitOk);
             }
 
-            LaunchEnvironment.Validate();
-            var snapshot = PolicyFileReader.Read(args[0]);
-            return Emit(snapshot, ExitOk);
+            if (args.Length == 2
+                && string.Equals(args[0], ProjectDirectoryMode, StringComparison.Ordinal))
+            {
+                LaunchEnvironment.Validate();
+                return Emit(ProjectDirectoryIdentityReader.Read(args[1]), ExitOk);
+            }
+
+            return EmitError(ExitInvalid, "usage");
         }
         catch (PolicyFailureException failure)
         {

@@ -463,6 +463,8 @@ $helperSourceNames = @(
     'WindowsSecurity.cs',
     'PolicyFileReader.cs',
     'PolicySnapshot.cs',
+    'ProjectDirectoryIdentityReader.cs',
+    'ProjectDirectoryIdentitySnapshot.cs',
     'NativeMethods.cs',
     'LaunchEnvironment.cs'
 )
@@ -863,6 +865,103 @@ function Assert-Ok {
     Add-Pass $Name
 }
 
+function Assert-DirectoryIdentityOk {
+    param(
+        [string]$Name,
+        $Result,
+        [string]$ExpectedPath,
+        [int]$ExpectedComponentCount,
+        [switch]$NoPass
+    )
+
+    if ($Result.OutputTooLarge) {
+        Add-Failure $Name 'directory identity output exceeded the bounded capture limit'
+        return $false
+    }
+
+    if ($Result.Stderr.Length -gt 0) {
+        Add-Failure $Name 'directory identity helper wrote to stderr' 'empty stderr' $Result.Stderr
+        return $false
+    }
+
+    if ($Result.ExitCode -ne 0) {
+        Add-Failure $Name 'directory identity helper did not return success' 'exit 0 status ok' ("exit $($Result.ExitCode) code $(Get-Prop $Result.Json 'code')")
+        return $false
+    }
+
+    if ([string](Get-Prop $Result.Json 'status') -ne 'ok') {
+        Add-Failure $Name 'directory identity helper did not return status ok'
+        return $false
+    }
+
+    if ([int](Get-Prop $Result.Json 'schemaVersion') -ne 1) {
+        Add-Failure $Name 'unexpected directory identity schemaVersion' '1' ([string](Get-Prop $Result.Json 'schemaVersion'))
+        return $false
+    }
+
+    if ([string](Get-Prop $Result.Json 'mode') -ne 'project-directory-identity') {
+        Add-Failure $Name 'unexpected directory identity mode' 'project-directory-identity' ([string](Get-Prop $Result.Json 'mode'))
+        return $false
+    }
+
+    if ($Result.Stdout.Length -gt 16384) {
+        Add-Failure $Name 'directory identity receipt is not strictly bounded' '<= 16384 characters' ([string]$Result.Stdout.Length)
+        return $false
+    }
+
+    $path = [string](Get-Prop $Result.Json 'directoryPath')
+    if (-not [string]::Equals((Normalize-DriveCase $path), (Normalize-DriveCase $ExpectedPath), [StringComparison]::Ordinal)) {
+        Add-Failure $Name 'directory path is not exact' $ExpectedPath $path
+        return $false
+    }
+
+    $volume = Get-Prop $Result.Json 'volume'
+    $volumeGuid = [string](Get-Prop $volume 'guid')
+    $serial = [string](Get-Prop $volume 'serialNumberHex')
+    if ($volumeGuid -notmatch '^\\\\\?\\volume\{[0-9a-fA-F-]+\}$') {
+        Add-Failure $Name 'volume GUID is not canonical' '\\?\volume{guid}' $volumeGuid
+        return $false
+    }
+    if ($serial -notmatch '^[0-9a-f]{16}$') {
+        Add-Failure $Name 'volume serial is not 16 lowercase hex digits' '16 hex digits' $serial
+        return $false
+    }
+
+    $directory = Get-Prop $Result.Json 'directory'
+    $directoryId = [string](Get-Prop $directory 'idHex')
+    $componentCount = [int](Get-Prop $directory 'componentCount')
+    if ($directoryId -notmatch '^[0-9a-f]{32}$') {
+        Add-Failure $Name 'directory id is not 32 lowercase hex digits' '32 hex digits' $directoryId
+        return $false
+    }
+    if ($componentCount -ne $ExpectedComponentCount) {
+        Add-Failure $Name 'directory component count mismatch' ([string]$ExpectedComponentCount) ([string]$componentCount)
+        return $false
+    }
+
+    $identity = [string](Get-Prop $Result.Json 'identity')
+    if ($identity -ne ($volumeGuid + '#' + $directoryId)) {
+        Add-Failure $Name 'directory identity is inconsistent'
+        return $false
+    }
+
+    foreach ($forbiddenField in @('bytesBase64', 'file', 'identities', 'protection')) {
+        if ($null -ne (Get-Prop $Result.Json $forbiddenField)) {
+            Add-Failure $Name "directory receipt unexpectedly contains $forbiddenField" 'minimal identity fields only'
+            return $false
+        }
+    }
+
+    if ($Result.Stdout -match 'S-1-') {
+        Add-Failure $Name 'directory receipt contains an SID'
+        return $false
+    }
+
+    if (-not $NoPass) {
+        Add-Pass $Name
+    }
+    return $true
+}
 function Assert-Denied {
     param(
         [string]$Name,
@@ -1120,6 +1219,112 @@ Run-Case 'directory-identity-shared-across-files' {
     Add-Pass 'directory-identity-shared-across-files'
 }
 
+Run-Case 'project-directory-stable' {
+    $directory = New-TestDirectory 'project directory stable'
+    $expectedPath = [IO.Path]::GetFullPath($directory)
+    $componentCount = ($expectedPath.Substring(3) -split '\\').Count
+
+    $first = Invoke-Helper @('--project-directory-identity', $directory)
+    $second = Invoke-Helper @('--project-directory-identity', $directory)
+    $firstOk = Assert-DirectoryIdentityOk 'project-directory-stable-first' $first $expectedPath $componentCount -NoPass
+    $secondOk = Assert-DirectoryIdentityOk 'project-directory-stable-second' $second $expectedPath $componentCount -NoPass
+    if (-not ($firstOk -and $secondOk)) { return }
+
+    $firstIdentity = [string](Get-Prop (Get-Prop $first.Json 'directory') 'idHex')
+    $secondIdentity = [string](Get-Prop (Get-Prop $second.Json 'directory') 'idHex')
+    if (
+        $firstIdentity -ne $secondIdentity -or
+        (Get-Prop $first.Json 'identity') -ne (Get-Prop $second.Json 'identity') -or
+        (Get-Prop $first.Json 'directoryPath') -ne (Get-Prop $second.Json 'directoryPath') -or
+        (Get-Prop (Get-Prop $first.Json 'volume') 'serialNumberHex') -ne (Get-Prop (Get-Prop $second.Json 'volume') 'serialNumberHex')
+    ) {
+        Add-Failure 'project-directory-stable' 'directory identity changed without a filesystem change'
+        return
+    }
+
+    Add-Pass 'project-directory-stable'
+}
+
+Run-Case 'project-directory-replacement-identity' {
+    $parent = New-TestDirectory 'project directory replacement'
+    $directory = Join-Path $parent 'project'
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    $expectedPath = [IO.Path]::GetFullPath($directory)
+    $componentCount = ($expectedPath.Substring(3) -split '\\').Count
+
+    $before = Invoke-Helper @('--project-directory-identity', $directory)
+    $beforeOk = Assert-DirectoryIdentityOk 'project-directory-replacement-before' $before $expectedPath $componentCount -NoPass
+    if (-not $beforeOk) { return }
+
+    $old = Join-Path $parent 'project-old'
+    [IO.Directory]::Move($directory, $old)
+    New-Item -ItemType Directory -Path $directory | Out-Null
+
+    $after = Invoke-Helper @('--project-directory-identity', $directory)
+    $afterOk = Assert-DirectoryIdentityOk 'project-directory-replacement-after' $after $expectedPath $componentCount -NoPass
+    if (-not $afterOk) { return }
+
+    $beforeId = [string](Get-Prop (Get-Prop $before.Json 'directory') 'idHex')
+    $afterId = [string](Get-Prop (Get-Prop $after.Json 'directory') 'idHex')
+    if ($beforeId -eq $afterId) {
+        Add-Failure 'project-directory-replacement-identity' 'replacement did not change directory identity'
+        return
+    }
+
+    if ((Get-Prop $before.Json 'identity') -eq (Get-Prop $after.Json 'identity')) {
+        Add-Failure 'project-directory-replacement-identity' 'composite directory identity did not change'
+        return
+    }
+
+    Add-Pass 'project-directory-replacement-identity'
+}
+
+Run-Case 'project-directory-file-denied' {
+    $parent = New-TestDirectory 'project directory wrong kind'
+    $file = Join-Path $parent 'not-a-directory'
+    Write-TestFile $file $policyBytes | Out-Null
+    Set-OwnerOnlyAcl -Path $file
+    Set-OwnerOnlyAcl -Path $parent -Directory
+
+    $result = Invoke-Helper @('--project-directory-identity', $file)
+    Assert-Denied 'project-directory-file-denied' $result 3 @('component-not-directory')
+}
+
+Run-Case 'project-directory-junction-denied' {
+    $parent = New-TestDirectory 'project directory junction'
+    $target = New-TestDirectory 'project directory junction target'
+    $junction = Join-Path $parent 'linked-project'
+    New-Item -ItemType Junction -Path $junction -Target $target | Out-Null
+
+    $result = Invoke-Helper @('--project-directory-identity', $junction)
+    Assert-Denied 'project-directory-junction-denied' $result 3 @('component-reparse')
+}
+
+Run-Case 'project-directory-alias-denied' {
+    $parent = New-TestDirectory 'project directory alias long name'
+    $shortPath = [RacFixtureNative]::GetShortPath($parent)
+    if ([string]::IsNullOrWhiteSpace($shortPath) -or [string]::Equals($shortPath, $parent, [StringComparison]::OrdinalIgnoreCase)) {
+        Add-Result -Name 'project-directory-alias-denied' -Status 'UNSUPPORTED' -Detail '8.3 short-name generation is unavailable for the directory fixture path'
+        return
+    }
+
+    $result = Invoke-Helper @('--project-directory-identity', $shortPath)
+    Assert-Denied 'project-directory-alias-denied' $result 3 @('input-ambiguous')
+}
+
+Run-Case 'project-directory-case-mismatch-denied' {
+    $directory = New-TestDirectory 'ProjectDirectoryCaseExact'
+    $result = Invoke-Helper @('--project-directory-identity', $directory.ToLowerInvariant())
+    Assert-Denied 'project-directory-case-mismatch-denied' $result 3 @('input-case-mismatch')
+}
+
+Run-Case 'project-directory-usage' {
+    $onlyMode = Invoke-Helper @('--project-directory-identity')
+    Assert-Denied 'project-directory-usage-mode-only' $onlyMode 2 @('usage') 'invalid'
+
+    $extra = Invoke-Helper @('--project-directory-identity', $caseRoot, 'extra')
+    Assert-Denied 'project-directory-usage-extra-argument' $extra 2 @('usage') 'invalid'
+}
 Run-Case 'replacement-changes-identity' {
     $directory = New-TestDirectory 'replacement identity'
     $file = Join-Path $directory 'policy.json'
@@ -1606,6 +1811,12 @@ $summary = [pscustomobject]@{
         'The self-contained non-extracting single-file artifact is unsigned; package trust binding is downstream.',
         'The helper is built for x64; ARM64 Windows is not exercised.',
         'Long paths above the documented 8192-character/64-component bound and ReFS file IDs are not exercised.'
+        'Project-directory identity mode is not an ACL/ownership/approval or policy-content determination and is not sufficient for dispatch admission.'
+        'Project-directory mode releases handles before output; replacement or ACL changes after the final identity query are effect-lifetime TOCTOU. Stable/replaced directory identities, wrong kind, junction and short/case aliases are exercised, but a deterministic within-probe replacement race is not.'
+        'Policy mode directory identity is the policy file parent, not the registered project root; the explicit directory mode is required for project-root identity.'
+        'Non-fixed/remote project volumes are not mounted for this fixture; short-name alias coverage is UNSUPPORTED when 8.3 name generation is unavailable.'
+        'The shared strict path shape refuses a drive root as a project directory; the fixture uses subdirectories.'
+        'Drive-substitution aliases are not separately probed; short-name/case and junction aliases are covered.'
     )
 }
 

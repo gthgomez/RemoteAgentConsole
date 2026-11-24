@@ -2,7 +2,8 @@
 
 This directory contains a one-shot, local Windows helper used to read a
 restricted-deployment policy file and return a bounded snapshot plus stable
-volume/file/directory identity. It is a helper only: it does not host a
+volume/file/directory identity, or to return a minimal directory identity for an
+already-qualified local project root through an explicit opt-in mode. It is a helper only: it does not host a
 service, parse the policy, load a live policy, discover processes, listen on a
 socket, enable privileges, or act as a controller.
 
@@ -136,8 +137,8 @@ fixture uses `FileSystemAclExtensions` to build exact owner-only descriptors and
 to remove such extra ACEs after replacement. The owner must be the process token
 user SID; a policy file owned by Administrators or SYSTEM is rejected even if its
 DACL is otherwise private. The caller must also retain the exact canonical
-component spelling of the policy path; the helper normalizes only the drive-letter
-case.
+component spelling of the policy or project-directory path; the helper normalizes
+only the drive-letter case.
 
 ## One-shot invocation contract
 
@@ -148,27 +149,34 @@ package manifest, and keep the package directory non-writable by other users.
 If a framework-dependent build is ever used for development, pin the `.dll`,
 `.deps.json` and `.runtimeconfig.json` as well; the apphost `.exe` alone does not
 bind the code. A helper that can be replaced can lie about every field below.
-Package trust binding, project-directory identity and effect-lifetime TOCTOU
-remain downstream of this helper.
+Package trust binding, project-directory approval/admission and effect-lifetime
+TOCTOU remain downstream of this helper. The opt-in directory-identity mode returns
+only comparison material; it does not approve a project or bind policy semantics.
 
 Recommended minimal contract:
 
 1. Clear inherited `DOTNET_*`/`COREHOST_*`/`COMPLUS_*` and native-loading
-   overrides, then start the helper with `shell:false`, exactly one argument
-   (the canonical policy path), a short timeout (for example 15 seconds), and a
-   bounded stdout capture (for example 1 MiB). No extraction directory is used.
+   overrides, then start the helper with `shell:false`, a short timeout (for
+   example 15 seconds), and a bounded stdout capture (for example 1 MiB). Use
+   either exactly one argument (the canonical policy path) or exactly
+   `--project-directory-identity <canonical directory path>` for the opt-in
+   project-root identity receipt. No extraction directory is used.
 2. Require exit code `0`, empty stderr, one JSON object on stdout, and
    `status: "ok"`.
-3. Parse `bytesBase64` and validate the policy schema in the privileged caller.
-   Never log the snapshot bytes or the policy path from an error response.
-4. Bind `identities.volume`, `identities.file`, `identities.directory`,
-   `protection.fileFingerprint`, `protection.directoryFingerprint`, and `sha256`,
-   plus `file.size`, at startup.
+3. In policy mode, parse `bytesBase64` and validate the policy schema in the
+   privileged caller. In directory-identity mode, read only the bounded identity
+   receipt; it contains no policy bytes. Never log snapshot bytes or the path from
+   an error response.
+4. In policy mode, bind `identities.volume`, `identities.file`,
+   `identities.directory`, `protection.fileFingerprint`,
+   `protection.directoryFingerprint`, and `sha256`, plus `file.size`, at startup.
 5. Before every Windows admission, run the helper again against the same path.
-   Require `status: "ok"` and exact equality of the bound identity, protection
-   fingerprint and hash fields. Any change, any failure, any malformed response,
-   or any timeout is a denial. Do not rebind automatically after an identity or
-   protection change.
+   In policy mode require exact equality of the bound identity, protection
+   fingerprint and hash fields. In directory-identity mode require exact equality
+   of the bound canonical path, fixed volume and directory identity. Any change,
+   any failure, any malformed response, or any timeout is a denial. Do not rebind
+   automatically after a change. Directory identity alone is not sufficient for
+   dispatch admission.
 6. Pass the exact canonical component spelling. The helper normalizes only the
    drive-letter case; a case-only mismatch is `input-case-mismatch`. Do not
    lowercase, shorten, or re-resolve the path with Node before invoking it.
@@ -178,10 +186,12 @@ Recommended minimal contract:
    `\\?\volume{guid}#<32-hex-file-id>`; it is not Node's `dev:ino` string.
 
 A full re-read per admission is the minimal safe recheck because the helper is
-one-shot and holds no state. It is bounded at 256 KiB and is appropriate for a
-low-rate local control plane. A future identity-only recheck mode would still
-need held handles, reparse and DACL checks, protection fingerprints and the same
-fixed-package binding; it is intentionally not part of this change.
+one-shot and holds no state. Policy mode is bounded at 256 KiB and is appropriate
+for a low-rate local control plane. The opt-in project-directory mode is a fresh
+handle-relative identity probe: it releases its handles before writing output,
+does not read or list files, does not evaluate ACLs/SIDs, and is not a retained
+handle across check/use or a dispatch-admission decision. A policy identity-only
+recheck with held handles remains intentionally out of scope.
 
 ### Output schema (success)
 
@@ -235,6 +245,39 @@ The file bytes, file identity, and file state come from the same open leaf
 handle. The directory identity comes from the held parent-directory handle. The
 volume GUID comes from the same leaf handle and is checked against the held
 drive-root handle.
+Policy mode's `directoryPath`/`directory` identity is the policy file's immediate
+parent, not the registered project root. Use the opt-in directory mode when the
+registered project root must be identified independently.
+
+### Project-directory identity schema (success)
+
+```json
+{
+  "schemaVersion": 1,
+  "status": "ok",
+  "mode": "project-directory-identity",
+  "directoryPath": "C:\\work\\project",
+  "volume": {
+    "guid": "\\\\?\\volume{...}",
+    "serialNumberHex": "<16 lowercase hex>"
+  },
+  "directory": {
+    "idHex": "<32 lowercase hex>",
+    "componentCount": 3
+  },
+  "identity": "\\\\?\\volume{...}#<32 lowercase hex>"
+}
+```
+
+This receipt is deliberately bounded to canonical path, fixed-volume GUID/serial,
+directory file ID and component count. It contains no policy bytes, file entries,
+ACLs, SIDs, security fingerprints or approval result. A successful probe means the
+component chain was local fixed, non-reparse directories with an exact canonical
+spelling and a stable directory identity across the final re-query; it does not
+mean the project is approved, ACL-safe, policy-bound or eligible for dispatch. This
+is a qualification/library probe, not a production path or host binding. The handles
+are released before the receipt is written, so this is not a retained-handle across
+check/use; callers must run it again and compare the bound fields.
 
 ### Errors
 
@@ -251,7 +294,9 @@ Representative denial codes include:
 `input-not-drive-absolute`, `input-drive-root`, `input-alternate`,
 `input-component-invalid`, `input-case-mismatch`, `volume-not-local-fixed`,
 `volume-root-*`, `component-reparse`, `component-not-directory`,
-`component-volume-mismatch`, `directory-*`, `parent-owner-untrusted`,
+`component-volume-mismatch`, `directory-*`, `directory-changed`,
+`directory-path-unavailable`, `directory-identity-unavailable`,
+`parent-owner-untrusted`,
 `parent-dacl-unsafe`, `parent-dacl-unsupported`, `runtime-env-untrusted`,
 `file-reparse`,
 `file-not-regular`, `file-empty`, `file-oversize`, `file-hardlinked`,
@@ -310,12 +355,41 @@ Representative denial codes include:
   check fail closed on a decoy. `GENERIC_WRITE` is still rejected conservatively
   because it can include attribute/EA writes. Read/execute sharing on ancestors
   is likewise not a replacement capability.
+- **Project-directory identity mode.** The opt-in mode reuses the same strict
+  drive-root and handle-relative `NtCreateFile` component walk, `FILE_OPEN_REPARSE_POINT`,
+  fixed-volume, directory/device/offline and canonical-path checks as policy mode,
+  but opens only directories and performs no file read or directory listing. It
+  re-queries directory identity/standard/basic information after the canonical path
+  check and fails with `directory-changed` if the object changed. It intentionally
+  does not evaluate ACLs/SIDs, emit security fingerprints, retain handles after
+  output, or decide project approval/dispatch admission.
 - **Sensitive failures.** All failures are stable codes. The helper does not
   write the path, SID, ACL, or exception to stdout/stderr.
 
 ## Known gaps and boundary
 
-- Administrator/SYSTEM can take ownership or use backup/restore privileges
+- The project-directory identity mode is not an ACL, ownership, policy-content or
+  project-approval determination. It returns only directory path/volume/file
+  identity material. It is not a retained handle across check/use and is not
+  sufficient for dispatch admission; the caller must bind and recheck it.
+- Project-directory mode releases its handles before output, so replacement or
+  ACL changes after the final identity query are effect-lifetime TOCTOU. The
+  fixture covers stable/replaced directory identity, wrong kind, junction and
+  short/case aliases, not a deterministic within-probe replacement race.
+- The existing policy snapshot's `directory` is the policy file's immediate parent,
+  not the registered project root. Using it as a project identity would be a shape
+  error; use the opt-in directory mode for that purpose.
+- Non-fixed/remote project volumes and short-name generation unavailability are
+  system-dependent; policy mode already fails closed on non-fixed volumes, and
+  the short-alias identity case is `UNSUPPORTED` when 8.3 names are unavailable.
+- The shared strict path shape refuses a drive root as a project directory; a
+  registered project root must be below the drive root. Drive-substitution aliases
+  are not separately probed; short/case and junction aliases are covered.
+- Directory identity mode checks each component when opened and re-reads the final
+  directory identity/standard/basic state before release; earlier component handles
+  are not re-read at the end. The final directory replacement test and canonical
+  path checks cover the intended identity witness, not an all-component retained
+  snapshot.- Administrator/SYSTEM can take ownership or use backup/restore privileges
   regardless of the DACL. "Owner-only" means owner-only under normal access
   checks, not a guarantee against a local administrator, and it does not
   isolate another process running as the same user.
@@ -345,8 +419,8 @@ Representative denial codes include:
   does not depend on case-sensitive siblings behaving like aliases.
 - The emitted single-file artifact is self-contained, non-extracting and
   unsigned. Production signing, fixed-path installation, package trust binding,
-  project-directory identity and effect-lifetime TOCTOU remain downstream. No
-  signature is pretended here.
+  project-directory approval/admission and effect-lifetime TOCTOU remain downstream.
+  No signature is pretended here.
 - If native extraction is reintroduced in a future publish, protected extraction
   and runtime-dependency bytes become a new mandatory launch boundary; artifact
   hash validation alone would not attest previously extracted components.
