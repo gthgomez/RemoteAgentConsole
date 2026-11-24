@@ -202,7 +202,8 @@ Scratch output is created under the caller-supplied scratch root, for example
   (no dirty scoped inputs). The derived witness class does not alter historical
   attestation or weaken the exact-commit/hash checks.
 - Public `LaunchStage` numeric values 0-6 are preserved; `CreateStdio = 7` and
-  `CreateHandleList = 8` are appended and guarded by a type-initialization assertion.
+  `CreateHandleList = 8` are appended. The `contract-validation` fixture asserts
+  all nine values.
 - Pipe-enabled launches create three inheritable child ends during the bounded create
   window. Run this component in a dedicated owner launcher; pipe-enabled launches are
   serialized, but unrelated inherit-all spawns in the same OS process are outside its
