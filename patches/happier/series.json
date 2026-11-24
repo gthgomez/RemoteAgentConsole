@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "base": {
+    "repository": "https://github.com/happier-dev/happier.git",
+    "commit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+    "tree": "911bdc3c673608490b932bd939166d88f198066a"
+  },
+  "patches": [
+    {
+      "path": "patches/happier/0001-restrict-rpc-and-acp-admission.patch",
+      "sha256": "012e3c492dc1c69faef449b715ce035a8386eb3d076832aa0e6a0697b6fb83c6",
+      "description": "Restricted RPC and ACP approval admission scaffold"
+    },
+    {
+      "path": "patches/happier/0002-require-current-device-grants.patch",
+      "sha256": "7623fcf7d2ec64ce5095c470892c224c070f6371c72447dd0864058e69abb825",
+      "description": "Restricted server grant validation, legacy login barrier, and additive storage"
+    }
+  ]
+}

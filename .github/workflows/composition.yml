@@ -1,0 +1,86 @@
+name: Composition inputs
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/composition.yml"
+      - "distribution/**"
+      - "patches/happier/**"
+      - "profiles/**"
+      - "qualification/**"
+      - "tools/export-rac-history.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/composition.yml"
+      - "distribution/**"
+      - "patches/happier/**"
+      - "profiles/**"
+      - "qualification/**"
+      - "tools/export-rac-history.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-inputs:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+      - name: Read selected Happier commit
+        id: pin
+        shell: pwsh
+        run: |
+          $lock = Get-Content -Raw distribution/composition-lock.json | ConvertFrom-Json
+          $commit = $lock.repositories.happier.commit
+          if ($commit -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid Happier source pin' }
+          "commit=$commit" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          repository: happier-dev/happier
+          ref: ${{ steps.pin.outputs.commit }}
+          path: upstream-happier
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/rac-reference-artifacts
+          key: rac-reference-artifacts-${{ hashFiles('distribution/composition-lock.json') }}
+      - name: Fetch versioned reference archives
+        shell: pwsh
+        run: |
+          $lock = Get-Content -Raw distribution/composition-lock.json | ConvertFrom-Json
+          $cache = Join-Path $env:RUNNER_TEMP 'rac-reference-artifacts'
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          foreach ($item in $lock.referenceArtifacts) {
+            if ($item.fileName -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]+\.tar\.gz$') {
+              throw 'Invalid reference archive name'
+            }
+            if ($item.url -cnotmatch '^https://github\.com/happier-dev/happier/releases/download/(cli|server|ui-web)-v[0-9]+\.[0-9]+\.[0-9]+/[A-Za-z0-9._-]+\.tar\.gz$') {
+              throw 'Invalid versioned upstream archive URL'
+            }
+            $archive = Join-Path $cache $item.fileName
+            if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+              Invoke-WebRequest -Uri $item.url -OutFile $archive
+            }
+          }
+      - name: Stage the pinned source and verify fixtures
+        shell: pwsh
+        run: |
+          $cache = Join-Path $env:RUNNER_TEMP 'rac-reference-artifacts'
+          $stage = Join-Path $env:RUNNER_TEMP 'rac-composition-stage'
+          node distribution/build-composition.mjs stage --happier-repo upstream-happier --artifact-dir $cache --output $stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node qualification/run-fixtures.mjs --happier-repo upstream-happier --artifact-dir $cache --candidate $stage
+      - name: Check legacy history export
+        run: node --test qualification/migration.test.ts

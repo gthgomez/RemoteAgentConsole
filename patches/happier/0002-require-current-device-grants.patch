@@ -1,0 +1,468 @@
+diff --git a/apps/server/prisma/migrations/20261124162000_add_restricted_device_grants/migration.sql b/apps/server/prisma/migrations/20261124162000_add_restricted_device_grants/migration.sql
+new file mode 100644
+index 00000000..e429e8f9
+--- /dev/null
++++ b/apps/server/prisma/migrations/20261124162000_add_restricted_device_grants/migration.sql
+@@ -0,0 +1,18 @@
++-- CreateTable
++CREATE TABLE "RestrictedDeviceGrant" (
++    "id" TEXT NOT NULL,
++    "accountId" TEXT NOT NULL,
++    "authorityIncarnation" TEXT NOT NULL,
++    "kind" TEXT NOT NULL,
++    "generation" INTEGER NOT NULL DEFAULT 1,
++    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    "revokedAt" TIMESTAMP(3),
++
++    CONSTRAINT "RestrictedDeviceGrant_pkey" PRIMARY KEY ("id")
++);
++
++-- CreateIndex
++CREATE INDEX "RestrictedDeviceGrant_accountId_revokedAt_idx" ON "RestrictedDeviceGrant"("accountId", "revokedAt");
++
++-- AddForeignKey
++ALTER TABLE "RestrictedDeviceGrant" ADD CONSTRAINT "RestrictedDeviceGrant_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+diff --git a/apps/server/prisma/mysql/migrations/20261124162000_add_restricted_device_grants/migration.sql b/apps/server/prisma/mysql/migrations/20261124162000_add_restricted_device_grants/migration.sql
+new file mode 100644
+index 00000000..6bfadf5f
+--- /dev/null
++++ b/apps/server/prisma/mysql/migrations/20261124162000_add_restricted_device_grants/migration.sql
+@@ -0,0 +1,16 @@
++-- CreateTable
++CREATE TABLE `RestrictedDeviceGrant` (
++    `id` VARCHAR(191) NOT NULL,
++    `accountId` VARCHAR(191) NOT NULL,
++    `authorityIncarnation` VARCHAR(191) NOT NULL,
++    `kind` VARCHAR(191) NOT NULL,
++    `generation` INTEGER NOT NULL DEFAULT 1,
++    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
++    `revokedAt` DATETIME(3) NULL,
++
++    INDEX `RestrictedDeviceGrant_accountId_revokedAt_idx`(`accountId`, `revokedAt`),
++    PRIMARY KEY (`id`)
++) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
++
++-- AddForeignKey
++ALTER TABLE `RestrictedDeviceGrant` ADD CONSTRAINT `RestrictedDeviceGrant_accountId_fkey` FOREIGN KEY (`accountId`) REFERENCES `Account`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+diff --git a/apps/server/prisma/mysql/schema.prisma b/apps/server/prisma/mysql/schema.prisma
+index 7399d483..21f64f76 100644
+--- a/apps/server/prisma/mysql/schema.prisma
++++ b/apps/server/prisma/mysql/schema.prisma
+@@ -57,6 +57,7 @@ model Account {
+     TerminalAuthRequest    TerminalAuthRequest[]
+     AccountAuthRequest     AccountAuthRequest[]
+     AuthPairingSession     AuthPairingSession[]
++    RestrictedDeviceGrant RestrictedDeviceGrant[]
+     UsageReport            UsageReport[]
+     Machine                Machine[]
+     UploadedFile           UploadedFile[]
+@@ -94,6 +95,19 @@ model Account {
+     automationRuns         AutomationRun[]
+ }
+ 
++model RestrictedDeviceGrant {
++    id                    String    @id @default(cuid())
++    accountId             String
++    account               Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
++    authorityIncarnation  String
++    kind                  String
++    generation            Int       @default(1)
++    createdAt             DateTime  @default(now())
++    revokedAt             DateTime?
++
++    @@index([accountId, revokedAt])
++}
++
+ model AccountSettingsSnapshot {
+     id              String   @id @default(cuid())
+     accountId       String
+diff --git a/apps/server/prisma/schema.prisma b/apps/server/prisma/schema.prisma
+index 0ce1aa9d..45230ac5 100644
+--- a/apps/server/prisma/schema.prisma
++++ b/apps/server/prisma/schema.prisma
+@@ -56,6 +56,7 @@ model Account {
+     TerminalAuthRequest    TerminalAuthRequest[]
+     AccountAuthRequest     AccountAuthRequest[]
+     AuthPairingSession     AuthPairingSession[]
++    RestrictedDeviceGrant RestrictedDeviceGrant[]
+     UsageReport            UsageReport[]
+     Machine                Machine[]
+     UploadedFile           UploadedFile[]
+@@ -93,6 +94,19 @@ model Account {
+     automationRuns         AutomationRun[]
+ }
+ 
++model RestrictedDeviceGrant {
++    id                    String    @id @default(cuid())
++    accountId             String
++    account               Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
++    authorityIncarnation  String
++    kind                  String
++    generation            Int       @default(1)
++    createdAt             DateTime  @default(now())
++    revokedAt             DateTime?
++
++    @@index([accountId, revokedAt])
++}
++
+ model AccountSettingsSnapshot {
+     id              String   @id @default(cuid())
+     accountId       String
+diff --git a/apps/server/prisma/sqlite/migrations/20261124162000_add_restricted_device_grants/migration.sql b/apps/server/prisma/sqlite/migrations/20261124162000_add_restricted_device_grants/migration.sql
+new file mode 100644
+index 00000000..ef304788
+--- /dev/null
++++ b/apps/server/prisma/sqlite/migrations/20261124162000_add_restricted_device_grants/migration.sql
+@@ -0,0 +1,14 @@
++-- CreateTable
++CREATE TABLE "RestrictedDeviceGrant" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "accountId" TEXT NOT NULL,
++    "authorityIncarnation" TEXT NOT NULL,
++    "kind" TEXT NOT NULL,
++    "generation" INTEGER NOT NULL DEFAULT 1,
++    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    "revokedAt" DATETIME,
++    CONSTRAINT "RestrictedDeviceGrant_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account" ("id") ON DELETE CASCADE ON UPDATE CASCADE
++);
++
++-- CreateIndex
++CREATE INDEX "RestrictedDeviceGrant_accountId_revokedAt_idx" ON "RestrictedDeviceGrant"("accountId", "revokedAt");
+diff --git a/apps/server/prisma/sqlite/schema.prisma b/apps/server/prisma/sqlite/schema.prisma
+index 49e92e21..4c509f38 100644
+--- a/apps/server/prisma/sqlite/schema.prisma
++++ b/apps/server/prisma/sqlite/schema.prisma
+@@ -57,6 +57,7 @@ model Account {
+     TerminalAuthRequest    TerminalAuthRequest[]
+     AccountAuthRequest     AccountAuthRequest[]
+     AuthPairingSession     AuthPairingSession[]
++    RestrictedDeviceGrant RestrictedDeviceGrant[]
+     UsageReport            UsageReport[]
+     Machine                Machine[]
+     UploadedFile           UploadedFile[]
+@@ -94,6 +95,19 @@ model Account {
+     automationRuns         AutomationRun[]
+ }
+ 
++model RestrictedDeviceGrant {
++    id                    String    @id @default(cuid())
++    accountId             String
++    account               Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
++    authorityIncarnation  String
++    kind                  String
++    generation            Int       @default(1)
++    createdAt             DateTime  @default(now())
++    revokedAt             DateTime?
++
++    @@index([accountId, revokedAt])
++}
++
+ model AccountSettingsSnapshot {
+     id              String   @id @default(cuid())
+     accountId       String
+diff --git a/apps/server/sources/app/api/routes/auth/authRoutes.ts b/apps/server/sources/app/api/routes/auth/authRoutes.ts
+index c14a9c72..ba5f2820 100644
+--- a/apps/server/sources/app/api/routes/auth/authRoutes.ts
++++ b/apps/server/sources/app/api/routes/auth/authRoutes.ts
+@@ -6,6 +6,7 @@ import { resolveTerminalAuthRequestPolicyFromEnv, terminalAuthRequestExpiresAt }
+ import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+ import { resolveAuthFeature } from "@/app/features/authFeature";
+ import { resolveAuthMethodRegistry } from "@/app/auth/methods/registry";
++import { readRestrictedDeviceAuthority } from "@/app/auth/restrictedDeviceGrants";
+ import { z } from "zod";
+ 
+ function hasAnyViableNonKeyChallengeAuthMethod(env: NodeJS.ProcessEnv): boolean {
+@@ -35,6 +36,8 @@ export function authRoutes(app: Fastify): void {
+         },
+     );
+ 
++    if (readRestrictedDeviceAuthority(process.env) !== null) return;
++
+     const terminalAuthPolicy = resolveTerminalAuthRequestPolicyFromEnv(process.env);
+     const isTerminalAuthExpired = (createdAt: Date): boolean => {
+         return Date.now() > terminalAuthRequestExpiresAt(createdAt, terminalAuthPolicy);
+diff --git a/apps/server/sources/app/auth/auth.ts b/apps/server/sources/app/auth/auth.ts
+index cb476491..73322256 100644
+--- a/apps/server/sources/app/auth/auth.ts
++++ b/apps/server/sources/app/auth/auth.ts
+@@ -1,11 +1,12 @@
+ import * as privacyKit from "privacy-kit";
+-import { createHash } from "node:crypto";
++import { createHash, createHmac } from "node:crypto";
+ import { log } from "@/utils/logging/log";
+ import { LRUTtlMap } from "@/utils/collections/lru";
+ import {
+     isOAuthStateUnavailableError,
+     OAuthStateUnavailableError,
+ } from "./oauthStateErrors";
++import { readRestrictedDeviceAuthority, verifyRestrictedDeviceGrant, type RestrictedDeviceContext } from "./restrictedDeviceGrants";
+ 
+ interface TokenGeneratorLike {
+     new: (payload: any) => Promise<string>;
+@@ -41,6 +42,7 @@ type OAuthStatePayload = Readonly<{
+ 
+ class AuthModule {
+     private tokenCache: LRUTtlMap<string, { userId: string; extras?: any }> | null = null;
++    private restrictedDeviceIncarnation: string | null = null;
+     private tokens: AuthTokens | null = null;
+     private oauthStateTokens: OAuthStateTokens | null = null;
+     private oauthStateTokensInitPromise: Promise<OAuthStateTokens> | null = null;
+@@ -85,7 +87,7 @@ class AuthModule {
+             .digest("base64url");
+     }
+ 
+-    private async createPersistentAuthTokens(masterSecret: string): Promise<AuthTokens> {
++    private async createPersistentAuthTokens(masterSecret: string, allowLegacyCompatibility = true): Promise<AuthTokens> {
+         const generator = await privacyKit.createPersistentTokenGenerator({
+             service: "handy",
+             seed: masterSecret,
+@@ -94,6 +96,7 @@ class AuthModule {
+             service: "handy",
+             publicKey: Uint8Array.from(generator.publicKey),
+         });
++        if (!allowLegacyCompatibility) return { generator, verifier: primaryVerifier };
+ 
+         const legacySeedCandidates = Array.from(
+             { length: LEGACY_BUN_SEED_CANDIDATE_COUNT },
+@@ -177,8 +180,12 @@ class AuthModule {
+         log({ module: 'auth' }, 'Initializing auth module...');
+         
+         const masterSecret = this.requireMasterSecret(process.env);
+-
+-        this.tokens = await this.createPersistentAuthTokens(masterSecret);
++        this.restrictedDeviceIncarnation = readRestrictedDeviceAuthority(process.env);
++        const deviceIncarnation = this.restrictedDeviceIncarnation;
++        const signingSeed = deviceIncarnation
++            ? createHmac('sha256', masterSecret).update(`rac-device-authority-v1:${deviceIncarnation}`).digest('base64url')
++            : masterSecret;
++        this.tokens = await this.createPersistentAuthTokens(signingSeed, deviceIncarnation === null);
+ 
+         const tokenCacheMaxEntries = this.resolveAuthTokenCacheMaxEntriesFromEnv(process.env);
+         if (tokenCacheMaxEntries > 0) {
+@@ -198,6 +205,9 @@ class AuthModule {
+         if (!this.tokens) {
+             throw new Error('Auth module not initialized');
+         }
++        if (this.restrictedDeviceIncarnation !== null) {
++            throw new Error('Restricted deployment requires local device enrollment');
++        }
+         
+         const payload: any = { user: userId };
+         if (extras) {
+@@ -212,14 +222,31 @@ class AuthModule {
+         return token;
+     }
+ 
+-    async verifyToken(token: string): Promise<{ userId: string; extras?: any } | null> {
++    private async authorizeVerifiedToken(verified: { userId: string; extras?: any }): Promise<{
++        userId: string;
++        extras?: any;
++        deviceGrant?: RestrictedDeviceContext;
++    } | null> {
++        const authorityIncarnation = this.restrictedDeviceIncarnation;
++        if (!authorityIncarnation) return verified;
++        const deviceGrant = await verifyRestrictedDeviceGrant({
++            authorityIncarnation,
++            userId: verified.userId,
++            signedExtras: verified.extras,
++            nowMs: Date.now(),
++            lookupGrant: async (id) => {
++                const { db } = await import('@/storage/db');
++                return await db.restrictedDeviceGrant.findUnique({ where: { id } });
++            },
++        });
++        return deviceGrant ? { userId: verified.userId, deviceGrant } : null;
++    }
++
++    async verifyToken(token: string): Promise<{ userId: string; extras?: any; deviceGrant?: RestrictedDeviceContext } | null> {
+         // Check cache first
+         const cached = this.tokenCache?.get(token);
+         if (cached) {
+-            return {
+-                userId: cached.userId,
+-                extras: cached.extras
+-            };
++            return await this.authorizeVerifiedToken({ userId: cached.userId, extras: cached.extras });
+         }
+         
+         // Cache miss - verify token
+@@ -238,7 +265,7 @@ class AuthModule {
+ 
+             this.tokenCache?.set(token, { userId, extras });
+             
+-            return { userId, extras };
++            return await this.authorizeVerifiedToken({ userId, extras });
+             
+         } catch (error) {
+             log({ module: 'auth', level: 'error' }, `Token verification failed: ${error}`);
+diff --git a/apps/server/sources/app/auth/restrictedDeviceGrants.test.ts b/apps/server/sources/app/auth/restrictedDeviceGrants.test.ts
+new file mode 100644
+index 00000000..72d19a6c
+--- /dev/null
++++ b/apps/server/sources/app/auth/restrictedDeviceGrants.test.ts
+@@ -0,0 +1,92 @@
++import { afterEach, describe, expect, it, vi } from 'vitest';
++
++import { readRestrictedDeviceAuthority, verifyRestrictedDeviceGrant } from './restrictedDeviceGrants';
++
++const authorityIncarnation = 'ca3f8c09-6cca-4042-a47a-978a8c2950ac';
++const replacementIncarnation = '3a8f4d42-2b8e-4fff-8bd2-2fc44d6655c9';
++const fixtureGrant = {
++    id: 'fixture-grant',
++    accountId: 'fixture-account',
++    authorityIncarnation,
++    kind: 'phone',
++    generation: 2,
++    createdAt: new Date(1_000),
++    revokedAt: null,
++};
++const fixtureClaim = {
++    format: 'restricted-device-v1',
++    authorityIncarnation,
++    accountId: fixtureGrant.accountId,
++    grantId: fixtureGrant.id,
++    grantGeneration: fixtureGrant.generation,
++    kind: 'phone',
++    issuedAtMs: 2_000,
++    expiresAtMs: 5_000,
++};
++
++describe('restricted device grant authorization', () => {
++    afterEach(() => vi.unstubAllEnvs());
++
++    it('requires configured local authority before activating restricted authentication', () => {
++        expect(readRestrictedDeviceAuthority({})).toBeNull();
++        expect(() => readRestrictedDeviceAuthority({ HAPPIER_RAC_RESTRICTED_DEPLOYMENT: '1' })).toThrow();
++        expect(() => readRestrictedDeviceAuthority({ HAPPIER_RAC_AUTH_INCARNATION: authorityIncarnation })).toThrow();
++        expect(readRestrictedDeviceAuthority({
++            HAPPIER_RAC_RESTRICTED_DEPLOYMENT: '1', HAPPIER_RAC_AUTH_INCARNATION: authorityIncarnation,
++        })).toBe(authorityIncarnation);
++    });
++
++    it('looks up the current grant on every verification and denies revoked authority', async () => {
++        const lookupGrant = vi.fn()
++            .mockResolvedValueOnce(fixtureGrant)
++            .mockResolvedValueOnce({ ...fixtureGrant, revokedAt: new Date(3_100), generation: 3 });
++        const verification = {
++            authorityIncarnation, userId: fixtureGrant.accountId, signedExtras: fixtureClaim, nowMs: 3_200, lookupGrant,
++        };
++        await expect(verifyRestrictedDeviceGrant(verification)).resolves.toMatchObject({ grantId: fixtureGrant.id, kind: 'phone' });
++        await expect(verifyRestrictedDeviceGrant(verification)).resolves.toBeNull();
++        expect(lookupGrant).toHaveBeenCalledTimes(2);
++    });
++
++    it('rejects legacy, mismatched, expired and pre-restore claims before grant lookup', async () => {
++        const lookupGrant = vi.fn().mockResolvedValue(fixtureGrant);
++        const verification = {
++            authorityIncarnation, userId: fixtureGrant.accountId, signedExtras: fixtureClaim, nowMs: 3_000, lookupGrant,
++        };
++        await expect(verifyRestrictedDeviceGrant({ ...verification, signedExtras: null })).resolves.toBeNull();
++        await expect(verifyRestrictedDeviceGrant({ ...verification, userId: 'other-account' })).resolves.toBeNull();
++        await expect(verifyRestrictedDeviceGrant({ ...verification, nowMs: fixtureClaim.expiresAtMs })).resolves.toBeNull();
++        await expect(verifyRestrictedDeviceGrant({ ...verification, authorityIncarnation: replacementIncarnation })).resolves.toBeNull();
++        expect(lookupGrant).not.toHaveBeenCalled();
++    });
++
++    it('denies stale generations, substituted grants and unavailable authority storage', async () => {
++        const verification = { authorityIncarnation, userId: fixtureGrant.accountId, signedExtras: fixtureClaim, nowMs: 3_000 };
++        for (const current of [null, { ...fixtureGrant, generation: 3 }, { ...fixtureGrant, kind: 'host' },
++            { ...fixtureGrant, accountId: 'other-account' }, { ...fixtureGrant, createdAt: new Date(2_100) }]) {
++            await expect(verifyRestrictedDeviceGrant({ ...verification, lookupGrant: async () => current })).resolves.toBeNull();
++        }
++        await expect(verifyRestrictedDeviceGrant({
++            ...verification, lookupGrant: async () => { throw new Error('fixture storage unavailable'); },
++        })).resolves.toBeNull();
++    });
++
++    it('rejects a previously valid legacy bearer and legacy issuance on the maintained auth entry points', async () => {
++        vi.stubEnv('HANDY_MASTER_SECRET', Buffer.alloc(32, 7).toString('base64url'));
++        vi.stubEnv('HAPPIER_RAC_RESTRICTED_DEPLOYMENT', undefined);
++        vi.stubEnv('HAPPIER_RAC_AUTH_INCARNATION', undefined);
++        vi.resetModules();
++        const { auth: priorAuth } = await import('./auth');
++        await priorAuth.init();
++        const legacy = await priorAuth.createToken(fixtureGrant.accountId);
++        await expect(priorAuth.verifyToken(legacy)).resolves.toMatchObject({ userId: fixtureGrant.accountId });
++
++        vi.stubEnv('HAPPIER_RAC_RESTRICTED_DEPLOYMENT', '1');
++        vi.stubEnv('HAPPIER_RAC_AUTH_INCARNATION', authorityIncarnation);
++        vi.resetModules();
++        const { auth: restrictedAuth } = await import('./auth');
++        await restrictedAuth.init();
++        await expect(restrictedAuth.verifyToken(legacy)).resolves.toBeNull();
++        await expect(restrictedAuth.createToken(fixtureGrant.accountId)).rejects.toThrow('local device enrollment');
++    });
++});
+diff --git a/apps/server/sources/app/auth/restrictedDeviceGrants.ts b/apps/server/sources/app/auth/restrictedDeviceGrants.ts
+new file mode 100644
+index 00000000..815d12ef
+--- /dev/null
++++ b/apps/server/sources/app/auth/restrictedDeviceGrants.ts
+@@ -0,0 +1,67 @@
++import { z } from 'zod';
++
++const authorityIdSchema = z.uuid();
++const deviceKindSchema = z.enum(['phone', 'host']);
++const grantClaimsSchema = z.strictObject({
++    format: z.literal('restricted-device-v1'),
++    authorityIncarnation: authorityIdSchema,
++    accountId: z.string().min(1).max(256),
++    grantId: z.string().min(1).max(256),
++    grantGeneration: z.number().int().min(1).max(2_147_483_647),
++    kind: deviceKindSchema,
++    issuedAtMs: z.number().int().nonnegative(),
++    expiresAtMs: z.number().int().positive(),
++});
++
++type DeviceGrantSnapshot = Readonly<{
++    id: string;
++    accountId: string;
++    authorityIncarnation: string;
++    kind: string;
++    generation: number;
++    createdAt: Date;
++    revokedAt: Date | null;
++}>;
++
++export type RestrictedDeviceContext = Readonly<{
++    grantId: string;
++    generation: number;
++    kind: z.infer<typeof deviceKindSchema>;
++}>;
++
++/** The installer supplies the current authority incarnation independently of restored session data. */
++export function readRestrictedDeviceAuthority(env: NodeJS.ProcessEnv): string | null {
++    const mode = env.HAPPIER_RAC_RESTRICTED_DEPLOYMENT;
++    const incarnation = env.HAPPIER_RAC_AUTH_INCARNATION;
++    if (mode === undefined && incarnation === undefined) return null;
++    const parsed = authorityIdSchema.safeParse(incarnation);
++    if (mode !== '1' || !parsed.success) throw new Error('Restricted device authority is not configured');
++    return parsed.data;
++}
++
++/** Accept signed claims only while the matching durable grant is current. */
++export async function verifyRestrictedDeviceGrant(params: Readonly<{
++    authorityIncarnation: string;
++    userId: string;
++    signedExtras: unknown;
++    nowMs: number;
++    lookupGrant: (id: string) => Promise<DeviceGrantSnapshot | null>;
++}>): Promise<RestrictedDeviceContext | null> {
++    const parsed = grantClaimsSchema.safeParse(params.signedExtras);
++    if (!parsed.success) return null;
++    const claims = parsed.data;
++    if (claims.accountId !== params.userId || claims.authorityIncarnation !== params.authorityIncarnation
++        || claims.issuedAtMs > params.nowMs || claims.expiresAtMs <= params.nowMs
++        || claims.expiresAtMs <= claims.issuedAtMs) return null;
++
++    try {
++        const grant = await params.lookupGrant(claims.grantId);
++        if (!grant || grant.id !== claims.grantId || grant.accountId !== params.userId
++            || grant.authorityIncarnation !== params.authorityIncarnation || grant.revokedAt !== null
++            || grant.generation !== claims.grantGeneration || grant.kind !== claims.kind
++            || !(grant.createdAt.getTime() <= claims.issuedAtMs)) return null;
++        return { grantId: grant.id, generation: grant.generation, kind: claims.kind };
++    } catch {
++        return null;
++    }
++}
