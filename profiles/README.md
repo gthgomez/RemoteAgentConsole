@@ -15,6 +15,12 @@ The fixture fake is available only in isolated tests. Each enabled profile
 requires a fixed launch definition, project-scoped operations, and current
 qualification evidence.
 
+The restricted relay configuration requires `HAPPIER_RAC_PUBLIC_ORIGIN` with
+one exact HTTPS origin, for example `https://relay.example.invalid`. The relay
+listens on `127.0.0.1`. HTTP and Socket.IO use the same Host and Origin rules
+for the configured origin and the native client on the loopback address.
+The private Tailscale Serve path still requires validation on Windows.
+
 The earlier RAC host, PWA, fake runtime, and custom remote-control path remain
 available for legacy source review and migration tests.
 

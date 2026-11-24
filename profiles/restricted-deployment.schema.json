@@ -103,9 +103,12 @@
         {
           "contains": {
             "type": "object",
-            "required": ["id"],
+            "required": ["id", "backendId"],
             "properties": {
               "id": {
+                "const": "command-code"
+              },
+              "backendId": {
                 "const": "command-code"
               }
             }
@@ -116,9 +119,12 @@
         {
           "contains": {
             "type": "object",
-            "required": ["id"],
+            "required": ["id", "backendId"],
             "properties": {
               "id": {
+                "const": "opencode"
+              },
+              "backendId": {
                 "const": "opencode"
               }
             }
@@ -129,9 +135,12 @@
         {
           "contains": {
             "type": "object",
-            "required": ["id"],
+            "required": ["id", "backendId"],
             "properties": {
               "id": {
+                "const": "codex"
+              },
+              "backendId": {
                 "const": "codex"
               }
             }
@@ -142,9 +151,12 @@
         {
           "contains": {
             "type": "object",
-            "required": ["id"],
+            "required": ["id", "backendId"],
             "properties": {
               "id": {
+                "const": "babel"
+              },
+              "backendId": {
                 "const": "babel"
               }
             }
@@ -177,6 +189,17 @@
     "forbiddenMethods": {
       "type": "array",
       "uniqueItems": true,
+      "contains": {
+        "enum": [
+          "bash",
+          "daemon.terminal.ensure",
+          "daemon.terminal.input",
+          "writeFile",
+          "deletePath",
+          "capabilities.invoke"
+        ]
+      },
+      "minContains": 6,
       "items": {
         "type": "string",
         "minLength": 1,

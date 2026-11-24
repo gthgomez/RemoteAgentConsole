@@ -20,6 +20,16 @@
       "path": "patches/happier/0003-on-demand-relay-startup.patch",
       "sha256": "c4ddef7289d8d4b7929b86a0293cbe4ff54beecb148b72e08582e8406d81857d",
       "description": "Explicit on-demand startup for local user relay installation"
+    },
+    {
+      "path": "patches/happier/0004-restrict-relay-and-live-device-grants.patch",
+      "sha256": "4c46a7abcdcd1878a2b8a0354e76208bb31aa395a31fe536f4941a389f45b1c3",
+      "description": "Restricted relay Host and Origin checks and live socket grant validation"
+    },
+    {
+      "path": "patches/happier/0005-bind-restricted-policy-snapshot.patch",
+      "sha256": "813176aacb98036203e761e2dc44610fc6a6d43b5a9a3d21da9fcd473460935b",
+      "description": "Protected local policy identity validation and snapshot drift checks"
     }
   ]
 }

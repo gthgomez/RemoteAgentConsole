@@ -1,0 +1,315 @@
+diff --git a/apps/cli/src/security/restrictedDeployment/authorizeRpc.ts b/apps/cli/src/security/restrictedDeployment/authorizeRpc.ts
+index e3c7c971..f7f38de0 100644
+--- a/apps/cli/src/security/restrictedDeployment/authorizeRpc.ts
++++ b/apps/cli/src/security/restrictedDeployment/authorizeRpc.ts
+@@ -1,6 +1,7 @@
+ import {
+     isRestrictedDeploymentConfigured,
+-    loadRestrictedDeploymentPolicy,
++    isRestrictedDeploymentPolicySnapshotCurrent,
++    loadRestrictedDeploymentPolicySnapshot,
+     readProjectIdentity,
+     RESTRICTED_DEPLOYMENT_MODE_ENV,
+     RESTRICTED_DEPLOYMENT_POLICY_ENV,
+@@ -25,11 +26,13 @@ export function createRestrictedRpcAdmission(input: Readonly<{
+     }
+ 
+     try {
+-        const policy = loadRestrictedDeploymentPolicy(policyPath);
++        const snapshot = loadRestrictedDeploymentPolicySnapshot(policyPath);
++        const policy = snapshot.policy;
+         let boundProject: RestrictedDeploymentPolicy['projects'][number] | undefined;
+         const sessionMethods = new Set(policy.allowedSessionMethods);
+         const forbiddenMethods = new Set(policy.forbiddenMethods);
+         return (method, params) => {
++            if (!isRestrictedDeploymentPolicySnapshotCurrent(snapshot)) return false;
+             // Other operations require a receiver-owned schema and a separately integrated grant/control path.
+             if (method !== 'session.workState.get' || !sessionMethods.has(method) || forbiddenMethods.has(method)) return false;
+             if (!params || typeof params !== 'object' || Array.isArray(params) || Object.keys(params).length !== 0) return false;
+diff --git a/apps/cli/src/security/restrictedDeployment/policy.test.ts b/apps/cli/src/security/restrictedDeployment/policy.test.ts
+index f4f55661..c7110695 100644
+--- a/apps/cli/src/security/restrictedDeployment/policy.test.ts
++++ b/apps/cli/src/security/restrictedDeployment/policy.test.ts
+@@ -1,9 +1,10 @@
+-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
++import { chmodSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+ 
+ import { createRestrictedRpcAdmission } from './authorizeRpc';
++import { loadRestrictedDeploymentPolicy } from './policy';
+ 
+ describe('restricted deployment RPC admission', () => {
+   let root: string;
+@@ -28,7 +29,7 @@ describe('restricted deployment RPC admission', () => {
+       })),
+       allowedMachineMethods: ['capabilities.invoke', 'bash'],
+       allowedSessionMethods: ['session.workState.get', 'writeFile', 'daemon.terminal.input', 'future.handler'],
+-      forbiddenMethods: [] as string[],
++      forbiddenMethods: ['bash', 'daemon.terminal.ensure', 'daemon.terminal.input', 'writeFile', 'deletePath', 'capabilities.invoke'],
+     };
+   }
+ 
+@@ -54,7 +55,7 @@ describe('restricted deployment RPC admission', () => {
+     expect(invalid?.('bash', {})).toBe(false);
+   });
+ 
+-  it('denies unevaluated methods in both scopes even when listed in the policy', () => {
++  it.skipIf(process.platform === 'win32')('denies unevaluated methods in both scopes even when listed in the policy', () => {
+     const env = publish();
+     const machine = createRestrictedRpcAdmission({ scope: 'machine', env });
+     const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env });
+@@ -67,7 +68,7 @@ describe('restricted deployment RPC admission', () => {
+     expect(session?.('session.workState.get', {})).toBe(true);
+   });
+ 
+-  it('rechecks receiver-owned directory identity for previously admitted sessions', () => {
++  it.skipIf(process.platform === 'win32')('rechecks receiver-owned directory identity for previously admitted sessions', () => {
+     const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env: publish() });
+     expect(session?.('session.workState.get', {})).toBe(true);
+     renameSync(project, join(root, 'previous'));
+@@ -75,7 +76,33 @@ describe('restricted deployment RPC admission', () => {
+     expect(session?.('session.workState.get', {})).toBe(false);
+   });
+ 
+-  it('waits for a receiver-owned runtime directory and keeps that project bound', () => {
++  it.skipIf(process.platform === 'win32')('denies admission after the accepted policy file changes in place', () => {
++    const env = publish();
++    const admission = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env });
++    expect(admission?.('session.workState.get', {})).toBe(true);
++    const changed = policy();
++    changed.revision = 'fixture-revisioN';
++    writeFileSync(policyPath, JSON.stringify(changed), { mode: 0o600 });
++    let sideEffects = 0;
++    if (admission?.('session.workState.get', {})) sideEffects += 1;
++    expect(sideEffects).toBe(0);
++  });
++
++  it.skipIf(process.platform === 'win32')('denies admission after the accepted policy file is replaced or removed', () => {
++    const replacementEnv = publish();
++    const replacementAdmission = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env: replacementEnv });
++    const replacementPath = join(root, 'replacement.json');
++    writeFileSync(replacementPath, JSON.stringify(policy()), { mode: 0o600 });
++    renameSync(replacementPath, policyPath);
++    expect(replacementAdmission?.('session.workState.get', {})).toBe(false);
++
++    const removedEnv = publish();
++    const removedAdmission = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env: removedEnv });
++    unlinkSync(policyPath);
++    expect(removedAdmission?.('session.workState.get', {})).toBe(false);
++  });
++
++  it.skipIf(process.platform === 'win32')('waits for a receiver-owned runtime directory and keeps that project bound', () => {
+     const secondProject = join(root, 'second');
+     mkdirSync(secondProject);
+     const config = policy();
+@@ -89,13 +116,16 @@ describe('restricted deployment RPC admission', () => {
+     expect(session?.('session.workState.get', {})).toBe(false);
+   });
+ 
+-  it('denies admission when the policy path lies inside an enrolled project', () => {
++  it.skipIf(process.platform === 'win32')('denies admission when the policy path lies inside an enrolled project', () => {
+     policyPath = join(project, 'policy.json');
+-    const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env: publish() });
++    chmodSync(project, 0o700);
++    const env = publish();
++    expect(() => loadRestrictedDeploymentPolicy(policyPath)).toThrow(/outside all project directories/i);
++    const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env });
+     expect(session?.('session.workState.get', {})).toBe(false);
+   });
+ 
+-  it('denies admission for duplicate project IDs, duplicate profiles, or Babel mode overrides', () => {
++  it.skipIf(process.platform === 'win32')('denies admission for duplicate project IDs, duplicate profiles, or Babel mode overrides', () => {
+     const secondProject = join(root, 'second');
+     mkdirSync(secondProject);
+     const duplicateProject = policy();
+@@ -109,4 +139,19 @@ describe('restricted deployment RPC admission', () => {
+       expect(session?.('session.workState.get', {})).toBe(false);
+     }
+   });
++
++  it.skipIf(process.platform === 'win32')('requires profile ids to bind to their enumerated backend identities', () => {
++    const config = policy();
++    config.profiles[2].backendId = 'command-code';
++    const env = publish(config);
++    expect(() => loadRestrictedDeploymentPolicy(policyPath)).toThrow(/profile identity/i);
++    expect(createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env })?.('session.workState.get', {})).toBe(false);
++  });
++
++  it.skipIf(process.platform !== 'win32')('fails closed on Windows until native ACL and reparse checks are qualified', () => {
++    const env = publish();
++    const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env });
++    expect(session?.('session.workState.get', {})).toBe(false);
++    expect(() => loadRestrictedDeploymentPolicy(policyPath)).toThrow(/Windows ACL/i);
++  });
+ });
+diff --git a/apps/cli/src/security/restrictedDeployment/policy.ts b/apps/cli/src/security/restrictedDeployment/policy.ts
+index ae793766..3e8430d4 100644
+--- a/apps/cli/src/security/restrictedDeployment/policy.ts
++++ b/apps/cli/src/security/restrictedDeployment/policy.ts
+@@ -1,4 +1,4 @@
+-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
++import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync, type BigIntStats } from 'node:fs';
+ import { dirname, isAbsolute, normalize, relative, sep } from 'node:path';
+ import { z } from 'zod';
+ 
+@@ -11,6 +11,9 @@ export function isRestrictedDeploymentConfigured(env: NodeJS.ProcessEnv = proces
+ 
+ const MAX_POLICY_BYTES = 256 * 1024;
+ const PROFILE_IDS = ['command-code', 'opencode', 'codex', 'babel'] as const;
++const REQUIRED_FORBIDDEN_METHODS = [
++    'bash', 'daemon.terminal.ensure', 'daemon.terminal.input', 'writeFile', 'deletePath', 'capabilities.invoke',
++] as const;
+ const identifier = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/);
+ const methods = z.array(identifier).max(128).refine(values => new Set(values).size === values.length);
+ const policySchema = z.strictObject({
+@@ -62,14 +65,14 @@ export function readProjectIdentity(path: string): Readonly<{ canonicalPath: str
+     return { canonicalPath, directoryIdentity: `${stats.dev}:${stats.ino}` };
+ }
+ 
+-function readPolicyJson(path: string): unknown {
++function readPolicyJson(path: string): Readonly<{ value: unknown; fileState: PolicyFileState }> {
+     const descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+     try {
+-        const stats = fstatSync(descriptor);
+-        if (!stats.isFile() || stats.size === 0 || stats.size > MAX_POLICY_BYTES) {
++        const stats = fstatSync(descriptor, { bigint: true });
++        if (!stats.isFile() || stats.size === 0n || stats.size > BigInt(MAX_POLICY_BYTES)) {
+             throw new Error('Restricted deployment policy must be a bounded regular file');
+         }
+-        if (process.getuid && (stats.uid !== process.getuid() || (stats.mode & 0o077) !== 0)) {
++        if (stats.uid !== BigInt(process.getuid!()) || (stats.mode & 0o077n) !== 0n) {
+             throw new Error('Restricted deployment policy must be private to the local owner');
+         }
+         const buffer = Buffer.alloc(MAX_POLICY_BYTES + 1);
+@@ -79,22 +82,77 @@ function readPolicyJson(path: string): unknown {
+             if (read === 0) break;
+             length += read;
+         }
+-        if (length !== stats.size) throw new Error('Restricted deployment policy changed during publication');
+-        return JSON.parse(buffer.subarray(0, length).toString('utf8'));
++        const afterRead = fstatSync(descriptor, { bigint: true });
++        if (length !== Number(stats.size) || !samePolicyFileState(policyFileState(stats), policyFileState(afterRead))) {
++            throw new Error('Restricted deployment policy changed while being read');
++        }
++        const pathState = lstatSync(path, { bigint: true });
++        if (!pathState.isFile() || !samePolicyFileState(policyFileState(stats), policyFileState(pathState))) {
++            throw new Error('Restricted deployment policy was replaced while being read');
++        }
++        return { value: JSON.parse(buffer.subarray(0, length).toString('utf8')), fileState: policyFileState(stats) };
+     } finally {
+         closeSync(descriptor);
+     }
+ }
+ 
+-export function loadRestrictedDeploymentPolicy(path: string): RestrictedDeploymentPolicy {
+-    const canonicalPolicyPath = canonicalLocalPath(path);
+-    const policy = policySchema.parse(readPolicyJson(canonicalPolicyPath));
++function assertPolicyProtectionSupported(): void {
++    if (process.platform === 'win32' || !process.getuid) {
++        throw new Error('Restricted policy use requires qualified native Windows ACL and reparse-point protection');
++    }
++}
++
++function assertPrivatePolicyDirectory(path: string): string {
++    const stats = statSync(path, { bigint: true });
++    if (!stats.isDirectory() || stats.uid !== BigInt(process.getuid!()) || (stats.mode & 0o077n) !== 0n) {
++        throw new Error('Restricted policy directory must be private to the local owner');
++    }
++    return `${stats.dev}:${stats.ino}`;
++}
++
++type PolicyFileState = Readonly<{
++    dev: bigint; ino: bigint; size: bigint; mode: bigint; uid: bigint;
++    mtimeNs: bigint; ctimeNs: bigint; birthtimeNs: bigint;
++}>;
++
++export type RestrictedDeploymentPolicySnapshot = Readonly<{
++    policy: RestrictedDeploymentPolicy;
++    path: string;
++    fileState: PolicyFileState;
++    directoryIdentity: string;
++}>;
++
++function policyFileState(stats: BigIntStats): PolicyFileState {
++    return { dev: stats.dev, ino: stats.ino, size: stats.size, mode: stats.mode, uid: stats.uid,
++        mtimeNs: stats.mtimeNs, ctimeNs: stats.ctimeNs, birthtimeNs: stats.birthtimeNs };
++}
++
++function samePolicyFileState(a: PolicyFileState, b: PolicyFileState): boolean {
++    return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mode === b.mode
++        && a.uid === b.uid && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs && a.birthtimeNs === b.birthtimeNs;
++}
++
++function pathIsInside(directory: string, candidate: string): boolean {
++    const pathFromDirectory = relative(directory, candidate);
++    return pathFromDirectory === '' || (!isAbsolute(pathFromDirectory)
++        && pathFromDirectory !== '..' && !pathFromDirectory.startsWith(`..${sep}`));
++}
++
++/** Validate exact profile/project identity and return canonical receiver-owned paths. */
++function validatePolicyIdentities(value: unknown, policyFilePath: string): RestrictedDeploymentPolicy {
++    const policy = policySchema.parse(value);
+     if (new Set(policy.profiles.map(profile => profile.id)).size !== PROFILE_IDS.length) {
+         throw new Error('Restricted deployment requires four distinct profiles');
+     }
++    if (policy.profiles.some(profile => profile.backendId !== profile.id)) {
++        throw new Error('Restricted deployment profile identity must match its enumerated backend identity');
++    }
+     if (policy.profiles.some(profile => profile.id === 'babel' && profile.remoteSettings.length !== 0)) {
+         throw new Error('The Babel profile forbids remote settings');
+     }
++    if (REQUIRED_FORBIDDEN_METHODS.some(method => !policy.forbiddenMethods.includes(method))) {
++        throw new Error('Restricted policy is missing required forbidden methods');
++    }
+     const projectIds = new Set<string>();
+     const directoryIds = new Set<string>();
+     for (const project of policy.projects) {
+@@ -103,14 +161,41 @@ export function loadRestrictedDeploymentPolicy(path: string): RestrictedDeployme
+             || directoryIds.has(identity.directoryIdentity)) {
+             throw new Error('Invalid or duplicate restricted project identity');
+         }
+-        const policyRelativeToProject = relative(identity.canonicalPath, canonicalPolicyPath);
+-        if (policyRelativeToProject !== '..' && !policyRelativeToProject.startsWith(`..${sep}`)
+-            && !isAbsolute(policyRelativeToProject)) {
+-            throw new Error('Restricted deployment policy must be outside all project directories');
+-        }
+         project.canonicalPath = identity.canonicalPath;
+         projectIds.add(project.projectId);
+         directoryIds.add(identity.directoryIdentity);
+     }
++    if (policy.projects.some(project => pathIsInside(project.canonicalPath, policyFilePath))) {
++        throw new Error('Restricted deployment policy must be outside all project directories');
++    }
+     return policy;
+ }
++
++export function loadRestrictedDeploymentPolicySnapshot(path: string): RestrictedDeploymentPolicySnapshot {
++    assertPolicyProtectionSupported();
++    const canonicalPolicyPath = canonicalLocalPath(path);
++    const directoryIdentity = assertPrivatePolicyDirectory(dirname(canonicalPolicyPath));
++    const loaded = readPolicyJson(canonicalPolicyPath);
++    const policy = validatePolicyIdentities(loaded.value, canonicalPolicyPath);
++    const fileStateAfterValidation = lstatSync(canonicalPolicyPath, { bigint: true });
++    if (!fileStateAfterValidation.isFile() || !samePolicyFileState(loaded.fileState, policyFileState(fileStateAfterValidation))) {
++        throw new Error('Restricted deployment policy changed during validation');
++    }
++    const fileState = policyFileState(fileStateAfterValidation);
++    return { policy, path: canonicalPolicyPath, fileState, directoryIdentity };
++}
++
++export function loadRestrictedDeploymentPolicy(path: string): RestrictedDeploymentPolicy {
++    return loadRestrictedDeploymentPolicySnapshot(path).policy;
++}
++
++export function isRestrictedDeploymentPolicySnapshotCurrent(snapshot: RestrictedDeploymentPolicySnapshot): boolean {
++    try {
++        assertPolicyProtectionSupported();
++        if (assertPrivatePolicyDirectory(dirname(snapshot.path)) !== snapshot.directoryIdentity) return false;
++        const current = lstatSync(snapshot.path, { bigint: true });
++        return current.isFile() && samePolicyFileState(snapshot.fileState, policyFileState(current));
++    } catch {
++        return false;
++    }
++}

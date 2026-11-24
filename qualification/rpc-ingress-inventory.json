@@ -18,6 +18,7 @@
       "admittedMethods": ["session.workState.get"],
       "requires": [
         "local method allowlist",
+        "unchanged protected policy file",
         "current registered directory identity",
         "empty request object"
       ]

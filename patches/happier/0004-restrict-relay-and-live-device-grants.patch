@@ -1,0 +1,491 @@
+diff --git a/apps/server/sources/app/api/api.listenHost.spec.ts b/apps/server/sources/app/api/api.listenHost.spec.ts
+index a60aeb38..19fa23b9 100644
+--- a/apps/server/sources/app/api/api.listenHost.spec.ts
++++ b/apps/server/sources/app/api/api.listenHost.spec.ts
+@@ -10,6 +10,14 @@ import {
+   resolveApiCorsMaxAgeSeconds,
+   resolveApiListenHost,
+ } from './api';
++import { enableRestrictedRelayHttpIngress, readRestrictedRelayIngress } from './utils/restrictedRelayIngress';
++import type { Fastify as AppFastify } from './types';
++
++const restrictedEnv = {
++  HAPPIER_RAC_RESTRICTED_DEPLOYMENT: '1',
++  HAPPIER_RAC_AUTH_INCARNATION: 'ca3f8c09-6cca-4042-a47a-978a8c2950ac',
++  HAPPIER_RAC_PUBLIC_ORIGIN: 'https://rac-fixture.example',
++};
+ 
+ describe('resolveApiListenHost', () => {
+   it('defaults to 0.0.0.0', () => {
+@@ -23,6 +31,10 @@ describe('resolveApiListenHost', () => {
+   it('falls back to HAPPY_SERVER_HOST', () => {
+     expect(resolveApiListenHost({ HAPPY_SERVER_HOST: '127.0.0.1' })).toBe('127.0.0.1');
+   });
++
++  it('keeps restricted relays on IPv4 loopback even when a broader host was configured', () => {
++    expect(resolveApiListenHost({ ...restrictedEnv, HAPPIER_SERVER_HOST: '0.0.0.0' })).toBe('127.0.0.1');
++  });
+ });
+ 
+ describe('resolveApiCorsMaxAgeSeconds', () => {
+@@ -63,6 +75,14 @@ describe('API_CORS_EXPOSED_HEADERS', () => {
+ });
+ 
+ describe('createApiCorsOptions', () => {
++  it('advertises only the configured private HTTPS origin for a restricted relay', () => {
++    expect(createApiCorsOptions(restrictedEnv).origin).toBe(restrictedEnv.HAPPIER_RAC_PUBLIC_ORIGIN);
++    expect(() => createApiCorsOptions({ ...restrictedEnv, HAPPIER_RAC_PUBLIC_ORIGIN: 'http://rac-fixture.example' }))
++      .toThrow('private HTTPS origin');
++    expect(() => createApiCorsOptions({ ...restrictedEnv, HAPPIER_RAC_PUBLIC_ORIGIN: undefined }))
++      .toThrow('private HTTPS origin');
++  });
++
+   it('lets browser profiling preflight the timing header and read Server-Timing', async () => {
+     const app = fastify();
+     app.register(import('@fastify/cors'), createApiCorsOptions({}));
+@@ -94,6 +114,29 @@ describe('createApiCorsOptions', () => {
+   });
+ });
+ 
++it('admits only the configured authority and origin on the restricted HTTP request path', async () => {
++  const app = fastify();
++  const ingress = readRestrictedRelayIngress(restrictedEnv);
++  expect(ingress).toBeDefined();
++  enableRestrictedRelayHttpIngress(app as unknown as AppFastify, ingress!);
++  app.get('/probe', async () => ({ ok: true }));
++  try {
++    const options = { url: '/probe', method: 'GET' as const };
++    const origin = restrictedEnv.HAPPIER_RAC_PUBLIC_ORIGIN;
++    await expect(app.inject({ ...options, headers: { host: 'rac-fixture.example', origin } }))
++      .resolves.toMatchObject({ statusCode: 200 });
++    await expect(app.inject({ ...options, headers: { host: '127.0.0.1:3005' } }))
++      .resolves.toMatchObject({ statusCode: 200 });
++    await expect(app.inject({ ...options, headers: { host: '127.0.0.1:3005', origin: 'https://other.example' } }))
++      .resolves.toMatchObject({ statusCode: 403 });
++    await expect(app.inject({
++      ...options, headers: { host: 'other.example', origin, 'x-forwarded-host': 'rac-fixture.example' },
++    })).resolves.toMatchObject({ statusCode: 403 });
++  } finally {
++    await app.close();
++  }
++});
++
+ describe('enableContentTypeParsers', () => {
+   it('allows bodyless chunked POST requests without Content-Type to succeed without 415', async () => {
+     const app = fastify();
+diff --git a/apps/server/sources/app/api/api.ts b/apps/server/sources/app/api/api.ts
+index af2285d7..e383d565 100644
+--- a/apps/server/sources/app/api/api.ts
++++ b/apps/server/sources/app/api/api.ts
+@@ -33,8 +33,14 @@ import { automationRoutes } from "./routes/automations/automationRoutes";
+ import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v2SessionListServerTiming";
+ import { resolveApiRateLimitPluginOptions, resolveApiTrustProxy } from "./utils/apiRateLimitPolicy";
+ import { enableApiCompression } from "./utils/enableApiCompression";
++import {
++    enableRestrictedRelayHttpIngress,
++    readRestrictedRelayIngress,
++    RESTRICTED_RELAY_HOST,
++} from "./utils/restrictedRelayIngress";
+ 
+ export function resolveApiListenHost(env: Record<string, string | undefined>): string {
++    if (readRestrictedRelayIngress(env)) return RESTRICTED_RELAY_HOST;
+     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
+     return host.length > 0 ? host : '0.0.0.0';
+ }
+@@ -51,9 +57,7 @@ export const API_CORS_EXPOSED_HEADERS = [
+ 
+ export function createApiCorsOptions(env: Record<string, string | undefined>): FastifyCorsOptions {
+     return {
+-        origin: '*',
+-        // Keep permissive defaults for now. Tighten via a proxy/WAF or by
+-        // changing this list once deployments are stable.
++        origin: readRestrictedRelayIngress(env)?.origin ?? '*',
+         allowedHeaders: API_CORS_ALLOWED_HEADERS,
+         exposedHeaders: API_CORS_EXPOSED_HEADERS,
+         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+@@ -100,6 +104,7 @@ export async function startApi() {
+     log('Starting API...');
+ 
+     // Start API
++    const restrictedIngress = readRestrictedRelayIngress(process.env);
+     const trustProxy = resolveApiTrustProxy(process.env);
+     const app = fastify({
+         loggerInstance: logger,
+@@ -118,6 +123,7 @@ export async function startApi() {
+     app.setValidatorCompiler(validatorCompiler);
+     app.setSerializerCompiler(serializerCompiler);
+     const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as Fastify;
++    if (restrictedIngress) enableRestrictedRelayHttpIngress(typed, restrictedIngress);
+ 
+     // Enable features
+     enableMonitoring(typed);
+@@ -155,7 +161,7 @@ export async function startApi() {
+     });
+ 
+     // Start Socket
+-    startSocket(typed);
++    startSocket(typed, restrictedIngress);
+ 
+     // End
+     log('API ready on port http://localhost:' + port);
+diff --git a/apps/server/sources/app/api/socket.restrictedDeviceGrants.integration.spec.ts b/apps/server/sources/app/api/socket.restrictedDeviceGrants.integration.spec.ts
+new file mode 100644
+index 00000000..c91f3701
+--- /dev/null
++++ b/apps/server/sources/app/api/socket.restrictedDeviceGrants.integration.spec.ts
+@@ -0,0 +1,138 @@
++import { createHmac, randomUUID } from "node:crypto";
++import Fastify from "fastify";
++import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
++import { createPersistentTokenGenerator } from "privacy-kit";
++import { io as ioClient } from "socket.io-client";
++import { afterAll, beforeAll, expect, it } from "vitest";
++
++import { db } from "@/storage/db";
++import { auth } from "@/app/auth/auth";
++import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
++import { startSocket } from "./socket";
++import type { Fastify as AppFastify } from "./types";
++import { readRestrictedRelayIngress } from "./utils/restrictedRelayIngress";
++
++const incarnation = "ca3f8c09-6cca-4042-a47a-978a8c2950ac";
++const fixtureSecret = Buffer.alloc(32, 11).toString("base64url");
++const publicOrigin = "https://rac-fixture.example";
++let harness: LightSqliteHarness;
++
++beforeAll(async () => {
++    harness = await createLightSqliteHarness({
++        tempDirPrefix: "happier-restricted-socket-",
++        initAuth: true,
++        env: {
++            HANDY_MASTER_SECRET: fixtureSecret,
++            HAPPIER_RAC_RESTRICTED_DEPLOYMENT: "1",
++            HAPPIER_RAC_AUTH_INCARNATION: incarnation,
++            HAPPIER_RAC_PUBLIC_ORIGIN: publicOrigin,
++        },
++    });
++}, 120_000);
++
++afterAll(async () => {
++    await harness?.close();
++});
++
++it("rejects phone publisher claims and disconnects only the revoked phone's live connections", async () => {
++    const account = await db.account.create({ data: { publicKey: randomUUID() } });
++    const machineId = randomUUID();
++    await db.machine.create({
++        data: { id: machineId, accountId: account.id, metadata: "fixture", metadataVersion: 1 },
++    });
++    const generator = await createPersistentTokenGenerator({
++        service: "handy",
++        seed: createHmac("sha256", fixtureSecret).update(`rac-device-authority-v1:${incarnation}`).digest("base64url"),
++    });
++    async function grantToken(kind: "phone" | "host") {
++        const grant = await db.restrictedDeviceGrant.create({
++            data: { accountId: account.id, authorityIncarnation: incarnation, kind },
++        });
++        const issuedAtMs = Date.now();
++        return {
++            id: grant.id,
++            token: await generator.new({
++                user: account.id,
++                extras: {
++                    format: "restricted-device-v1",
++                    authorityIncarnation: incarnation,
++                    accountId: account.id,
++                    grantId: grant.id,
++                    grantGeneration: grant.generation,
++                    kind,
++                    issuedAtMs,
++                    expiresAtMs: issuedAtMs + 60_000,
++                },
++            }),
++        };
++    }
++    const lost = await grantToken("phone");
++    const other = await grantToken("phone");
++    const host = await grantToken("host");
++    for (const grant of [lost, other, host]) {
++        await expect(auth.verifyToken(grant.token)).resolves.toMatchObject({ deviceGrant: { grantId: grant.id } });
++    }
++    const app = Fastify({ logger: false }) as unknown as AppFastify;
++    const address = await app.listen({ host: "127.0.0.1", port: 0 });
++    startSocket(app, readRestrictedRelayIngress({ ...process.env, PORT: new URL(address).port }));
++    const sockets: Array<ReturnType<typeof ioClient>> = [];
++
++    function socketClient(auth: Record<string, unknown>, extraHeaders?: Record<string, string>) {
++        const socket = ioClient(address, {
++            path: "/v1/updates", autoConnect: false, reconnection: false, forceNew: true,
++            transports: ["websocket"], auth, extraHeaders,
++        });
++        sockets.push(socket);
++        return socket;
++    }
++
++    async function connect(socket: ReturnType<typeof ioClient>) {
++        await new Promise<void>((resolve, reject) => {
++            socket.once("connect", resolve);
++            socket.once("connect_error", reject);
++            socket.connect();
++        });
++    }
++
++    try {
++        const outsideOrigin = socketClient({ token: lost.token }, { Origin: "https://outside.example" });
++        await expect(connect(outsideOrigin)).rejects.toMatchObject({ message: "websocket error" });
++        const impostor = socketClient({ token: lost.token, machineId, clientType: "machine-scoped", takeover: true });
++        await expect(connect(impostor)).rejects.toMatchObject({ message: "device-scope-denied" });
++        const sessionImpostor = socketClient({ token: lost.token, sessionId: randomUUID(), clientType: "session-scoped" });
++        await expect(connect(sessionImpostor)).rejects.toMatchObject({ message: "device-scope-denied" });
++        const publisher = socketClient({ token: host.token, machineId, clientType: "machine-scoped" });
++        const sender = socketClient({ token: lost.token, deviceGrant: { grantId: other.id } });
++        const idle = socketClient({ token: lost.token });
++        const retained = socketClient({ token: other.token }, { Origin: publicOrigin });
++        await expect(connect(publisher), "host publisher").resolves.toBeUndefined();
++        await expect(connect(sender), "phone sender").resolves.toBeUndefined();
++        await expect(connect(idle), "idle socket for the same phone").resolves.toBeUndefined();
++        await expect(connect(retained), "other phone on the trusted origin").resolves.toBeUndefined();
++        await expect(sender.timeout(1_000).emitWithAck("ping")).resolves.toEqual({});
++
++        const method = `${machineId}:fixture.read`;
++        function register(socket: ReturnType<typeof ioClient>) {
++            return new Promise<unknown>(resolve => {
++                socket.once(SOCKET_RPC_EVENTS.REGISTERED, resolve);
++                socket.once(SOCKET_RPC_EVENTS.ERROR, resolve);
++                socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method });
++            });
++        }
++        await expect(register(publisher)).resolves.toEqual({ method });
++        await expect(register(sender)).resolves.toEqual({ type: "register", error: "Forbidden" });
++
++        const closed = [sender, idle].map(socket => new Promise<string>(resolve => socket.once("disconnect", resolve)));
++        await db.restrictedDeviceGrant.update({
++            where: { id: lost.id }, data: { revokedAt: new Date(), generation: { increment: 1 } },
++        });
++        await expect(sender.timeout(1_000).emitWithAck("ping")).rejects.toThrow();
++        await expect(Promise.all(closed)).resolves.toEqual(["io server disconnect", "io server disconnect"]);
++        await expect(connect(socketClient({ token: lost.token }))).rejects.toMatchObject({ message: "invalid-token" });
++        await expect(retained.timeout(1_000).emitWithAck("ping")).resolves.toEqual({});
++        await expect(publisher.timeout(1_000).emitWithAck("ping")).resolves.toEqual({});
++    } finally {
++        for (const socket of sockets) socket.close();
++        await app.close();
++    }
++}, 20_000);
+diff --git a/apps/server/sources/app/api/socket.ts b/apps/server/sources/app/api/socket.ts
+index 8e36aa01..f9b849ec 100644
+--- a/apps/server/sources/app/api/socket.ts
++++ b/apps/server/sources/app/api/socket.ts
+@@ -28,6 +28,7 @@ import {
+ import { createAdapter } from "@socket.io/redis-streams-adapter";
+ import { getRedisClient } from "@/storage/redis/redis";
+ import { randomUUID } from "node:crypto";
++import type { IncomingMessage } from "node:http";
+ import { getSocketAdapterFromEnv, isRedisStreamsEnabled } from "@/config/backends";
+ import { db } from "@/storage/db";
+ import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
+@@ -41,6 +42,8 @@ import { registerSessionRuntimeActivitySnapshotSocketEvent } from "@/app/session
+ import { publishSessionPublisherLifecycleUpdate } from "@/app/session/runtimeActivity/publishPublisherLifecycleUpdate";
+ import { registerUiFocusSocketEvent } from "./socket/registerUiFocusSocketEvent";
+ import { readHappierSocketData } from "./socket/socketData";
++import { bindRestrictedSocketGrant } from "./socket/bindRestrictedSocketGrant";
++import type { RestrictedRelayIngress } from "./utils/restrictedRelayIngress";
+ import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compatibility/registerReleasedUiV021SessionEndSocketEvent";
+ 
+ export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES;
+@@ -87,7 +90,7 @@ export function emitSocketPlannedRestart(
+     io.emit('server:restarting', { retryAfterMs: normalizedRetryAfterMs });
+ }
+ 
+-export function startSocket(app: Fastify) {
++export function startSocket(app: Fastify, restrictedIngress?: RestrictedRelayIngress) {
+     const socketAdapter = getSocketAdapterFromEnv(process.env, "memory");
+     const shouldEnableRedisAdapter = isRedisStreamsEnabled(process.env, socketAdapter);
+     const serverRoutedTransferEnabled = isServerFeatureEnabledForRequest(
+@@ -105,7 +108,7 @@ export function startSocket(app: Fastify) {
+ 
+     const io = new Server(app.server, {
+         cors: {
+-            origin: "*",
++            origin: restrictedIngress?.origin ?? "*",
+             methods: ["GET", "POST", "OPTIONS"],
+             // We authenticate via token in the Socket.IO handshake, not cookies.
+             credentials: false,
+@@ -123,6 +126,12 @@ export function startSocket(app: Fastify) {
+         serveClient: false // Don't serve the client files
+     });
+ 
++    if (restrictedIngress) {
++        io.engine.use((request: IncomingMessage, _response: unknown, next: (error?: Error) => void) => {
++            next(restrictedIngress.allows(request.headers) ? undefined : new Error("untrusted-relay-request"));
++        });
++    }
++
+     let plannedSocketShutdownStarted = false;
+ 
+     function rejectSocket(params: {
+@@ -172,6 +181,10 @@ export function startSocket(app: Fastify) {
+         if (!verified) {
+             return next(rejectSocket({ statusCode: 401, error: 'invalid-token' }));
+         }
++        const grant = verified.deviceGrant;
++        if (grant?.kind === 'phone' && clientType !== undefined && clientType !== 'user-scoped') {
++            return next(rejectSocket({ statusCode: 403, error: 'device-scope-denied' }));
++        }
+ 
+         const eligibility = await enforceLoginEligibility({ accountId: verified.userId, env: process.env });
+         if (!eligibility.ok) {
+@@ -233,6 +246,7 @@ export function startSocket(app: Fastify) {
+         }
+ 
+         socketData.userId = verified.userId;
++        if (grant) socketData.restrictedDeviceGrant = grant;
+         socketData.clientType = clientType;
+         socketData.clientPurpose = clientPurpose;
+         socketData.sessionId = sessionId;
+@@ -286,6 +300,18 @@ export function startSocket(app: Fastify) {
+             return;
+         }
+ 
++        const grant = socketData.restrictedDeviceGrant;
++        if (grant) {
++            const token = socket.handshake.auth.token as string;
++            bindRestrictedSocketGrant(socket, async () => {
++                const verified = await auth.verifyToken(token);
++                return verified?.userId === userId
++                    && verified.deviceGrant?.grantId === grant.grantId
++                    && verified.deviceGrant.generation === grant.generation
++                    && verified.deviceGrant.kind === grant.kind;
++            });
++        }
++
+         log(
+             {
+                 module: 'websocket',
+diff --git a/apps/server/sources/app/api/socket/bindRestrictedSocketGrant.ts b/apps/server/sources/app/api/socket/bindRestrictedSocketGrant.ts
+new file mode 100644
+index 00000000..b02ad76a
+--- /dev/null
++++ b/apps/server/sources/app/api/socket/bindRestrictedSocketGrant.ts
+@@ -0,0 +1,37 @@
++import type { Socket } from "socket.io";
++
++const GRANT_RECHECK_INTERVAL_MS = 5_000;
++const GRANT_CHECK_TIMEOUT_MS = 2_000;
++
++export function bindRestrictedSocketGrant(socket: Socket, isCurrent: () => Promise<boolean>): void {
++    let pendingCheck: Promise<boolean> | undefined;
++
++    function check(): Promise<boolean> {
++        if (pendingCheck) return pendingCheck;
++
++        let deadline: NodeJS.Timeout;
++        const expired = new Promise<boolean>(resolve => {
++            deadline = setTimeout(() => resolve(false), GRANT_CHECK_TIMEOUT_MS);
++            deadline.unref();
++        });
++        pendingCheck = Promise.race([Promise.resolve().then(isCurrent), expired])
++            .catch(() => false)
++            .then(current => {
++                if (!current) socket.disconnect(true);
++                return current && socket.connected;
++            })
++            .finally(() => {
++                clearTimeout(deadline);
++                pendingCheck = undefined;
++            });
++        return pendingCheck;
++    }
++
++    // Incoming messages must not wait for the idle connection sweep to observe revocation.
++    socket.use((_packet, next) => {
++        void check().then(current => next(current ? undefined : new Error("invalid-device-grant")));
++    });
++    const sweep = setInterval(() => void check(), GRANT_RECHECK_INTERVAL_MS);
++    sweep.unref();
++    socket.once("disconnect", () => clearInterval(sweep));
++}
+diff --git a/apps/server/sources/app/api/socket/rpcHandler.ts b/apps/server/sources/app/api/socket/rpcHandler.ts
+index 56abb132..c1971bad 100644
+--- a/apps/server/sources/app/api/socket/rpcHandler.ts
++++ b/apps/server/sources/app/api/socket/rpcHandler.ts
+@@ -289,7 +289,8 @@ export function rpcHandler(
+             }
+ 
+             if (
+-                !canRegisterSessionScopedRpcMethod({ socket, method })
++                readHappierSocketData(socket).restrictedDeviceGrant?.kind === 'phone'
++                || !canRegisterSessionScopedRpcMethod({ socket, method })
+                 || !canRegisterMachineScopedRpcMethod(socket, method)
+             ) {
+                 socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Forbidden' });
+diff --git a/apps/server/sources/app/api/socket/socketData.ts b/apps/server/sources/app/api/socket/socketData.ts
+index fb522565..63f4a236 100644
+--- a/apps/server/sources/app/api/socket/socketData.ts
++++ b/apps/server/sources/app/api/socket/socketData.ts
+@@ -1,5 +1,6 @@
+ import type { Socket } from "socket.io";
+ 
++import type { RestrictedDeviceContext } from "@/app/auth/restrictedDeviceGrants";
+ import type { SessionScopedSocketBinding } from "./sessionScopedBinding";
+ 
+ export interface HappierSocketData {
+@@ -11,6 +12,7 @@ export interface HappierSocketData {
+     machineId?: string;
+     connectedServiceIds?: readonly import("@happier-dev/protocol").ConnectedServiceId[];
+     sessionScopedBinding?: SessionScopedSocketBinding;
++    restrictedDeviceGrant?: RestrictedDeviceContext;
+ }
+ 
+ /** The sole typed view of Socket.IO's application-owned per-socket data bag. */
+diff --git a/apps/server/sources/app/api/utils/restrictedRelayIngress.ts b/apps/server/sources/app/api/utils/restrictedRelayIngress.ts
+new file mode 100644
+index 00000000..aa140782
+--- /dev/null
++++ b/apps/server/sources/app/api/utils/restrictedRelayIngress.ts
+@@ -0,0 +1,45 @@
++import type { IncomingHttpHeaders } from "node:http";
++
++import { readRestrictedDeviceAuthority } from "@/app/auth/restrictedDeviceGrants";
++import type { Fastify } from "../types";
++
++export const RESTRICTED_RELAY_HOST = "127.0.0.1";
++
++export type RestrictedRelayIngress = Readonly<{
++    origin: string;
++    allows: (headers: IncomingHttpHeaders) => boolean;
++}>;
++
++export function readRestrictedRelayIngress(env: NodeJS.ProcessEnv): RestrictedRelayIngress | undefined {
++    if (readRestrictedDeviceAuthority(env) === null) return undefined;
++    const origin = env.HAPPIER_RAC_PUBLIC_ORIGIN?.trim() ?? "";
++    const parsed = origin.length <= 512 ? URL.parse(origin) : null;
++    if (!parsed || parsed.protocol !== "https:" || parsed.origin !== origin) {
++        throw new Error("Restricted relay requires one private HTTPS origin without a path");
++    }
++    const port = Number(env.PORT ?? "3005");
++    if (!/^\d{1,5}$/.test(env.PORT ?? "3005") || port < 1 || port > 65_535) {
++        throw new Error("Restricted relay requires a valid local port");
++    }
++    const loopbackAuthority = port === 80 ? RESTRICTED_RELAY_HOST : `${RESTRICTED_RELAY_HOST}:${port}`;
++    const allowedHosts = new Set([parsed.host, loopbackAuthority]);
++    return {
++        origin,
++        allows: ({ host, origin: requestOrigin }) => (
++            typeof host === "string"
++            && allowedHosts.has(host.toLowerCase())
++            && (requestOrigin === undefined || requestOrigin === origin)
++        ),
++    };
++}
++
++export function enableRestrictedRelayHttpIngress(
++    app: Pick<Fastify, "addHook">,
++    ingress: RestrictedRelayIngress,
++): void {
++    app.addHook("onRequest", async (request, reply) => {
++        if (!ingress.allows(request.raw.headers)) {
++            return reply.code(403).send({ error: "untrusted-relay-request" });
++        }
++    });
++}
