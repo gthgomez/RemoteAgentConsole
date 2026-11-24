@@ -389,7 +389,10 @@ Representative denial codes include:
   directory identity/standard/basic state before release; earlier component handles
   are not re-read at the end. The final directory replacement test and canonical
   path checks cover the intended identity witness, not an all-component retained
-  snapshot.- Administrator/SYSTEM can take ownership or use backup/restore privileges
+  snapshot. A concurrent top-level file create, delete, or rename can change
+  directory metadata and yield `directory-changed`. A fresh identity probe can
+  be taken once the directory is stable; it does not retry an admitted effect.
+- Administrator/SYSTEM can take ownership or use backup/restore privileges
   regardless of the DACL. "Owner-only" means owner-only under normal access
   checks, not a guarantee against a local administrator, and it does not
   isolate another process running as the same user.
