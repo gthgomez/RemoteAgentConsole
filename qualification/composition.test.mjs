@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -66,7 +65,7 @@ async function createWorld() {
 
   await write(join(rac, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\nfixture: rac\n");
   await write(join(rac, "README.md"), "# RAC fixture\n");
-  const baseRac = commit(rac, "fixture: audited RAC baseline");
+  const baseRac = commit(rac, "fixture: declared RAC baseline pin");
   const baseRacTree = git(rac, ["rev-parse", "HEAD^{tree}"]);
   git(rac, ["remote", "add", "origin", RAC_URL]);
 
@@ -75,7 +74,7 @@ async function createWorld() {
     '{"name":"babel-cli","lockfileVersion":3}\n',
   );
   await write(join(babel, "README.md"), "# Babel fixture\n");
-  const babelCommit = commit(babel, "fixture: reviewed Babel candidate");
+  const babelCommit = commit(babel, "fixture: declared Babel baseline pin");
   const babelTree = git(babel, ["rev-parse", "HEAD^{tree}"]);
   git(babel, ["remote", "add", "origin", BABEL_URL]);
   git(babel, ["checkout", "-q", "--detach", babelCommit]);
@@ -299,6 +298,10 @@ test(
     assert.equal(receipt.candidateIsolation.structuralCandidate, "disposable staged checkout");
     assert.equal(receipt.candidateIsolation.sourceWorktreeClean, "not-claimed");
     assert.equal(receipt.coverage.sourceWorktree, "not-covered");
+    assert.equal(receipt.trustBoundary.classification, "structural-pr-check");
+    assert.equal(receipt.trustBoundary.baselinePins, "declared-by-selected-rac-commit");
+    assert.equal(receipt.trustBoundary.trustedMergeGate, false);
+    assert.equal(receipt.trustBoundary.independentApproval, false);
     assert.equal(receipt.components.happier.identityBound, true);
     assert.equal(receipt.components.happier.receiptBinding, "selected-rac-commit-blobs");
     assert.equal(receipt.components.happier.selected.patchCount, 5);
@@ -379,11 +382,11 @@ test("reads the lock from the selected RAC commit and rejects a missing baseline
 
   await assert.rejects(
     qualifyCandidate(qualifyOptions(world, { racCommit: badCommit })),
-    /Cannot resolve the audited RAC baseline/,
+    /Cannot resolve the declared RAC baseline pin/,
   );
 });
 
-test("rejects a lock whose audited RAC baseline tree does not match its commit", async (t) => {
+test("rejects a lock whose declared RAC baseline tree does not match its commit", async (t) => {
   const world = await createWorld();
   t.after(() => cleanup(world));
 
@@ -397,7 +400,7 @@ test("rejects a lock whose audited RAC baseline tree does not match its commit",
 
   await assert.rejects(
     qualifyCandidate(qualifyOptions(world, { racCommit: badCommit })),
-    /Audited RAC baseline tree mismatch/,
+    /Declared RAC baseline tree mismatch/,
   );
 });
 
@@ -535,7 +538,7 @@ test("rejects dirty RAC and dirty Babel checkouts", async (t) => {
   await assert.rejects(qualifyCandidate(qualifyOptions(world)), /RAC checkout is dirty/);
 });
 
-test("disallows Babel moving refs and unreviewed commit strings", async (t) => {
+test("disallows Babel moving refs and undeclared commit pins", async (t) => {
   const world = await createWorld();
   t.after(() => cleanup(world));
 
@@ -545,11 +548,11 @@ test("disallows Babel moving refs and unreviewed commit strings", async (t) => {
   );
   await assert.rejects(
     qualifyCandidate(qualifyOptions(world, { scope: "composition", babelTree: "0".repeat(40) })),
-    /must equal the reviewed composition lock/,
+    /must equal the declared composition lock pin/,
   );
   await assert.rejects(
     qualifyCandidate(qualifyOptions(world, { scope: "composition", babelCommit: "0".repeat(40) })),
-    /must equal the reviewed composition lock/,
+    /must equal the declared composition lock pin/,
   );
 
   git(world.babel, ["checkout", "-q", "-b", "moving-branch"]);
@@ -642,7 +645,7 @@ test("detects staged receipt tampering and product-claim inflation", async (t) =
       "built evidence in structural candidate",
       (receipt) => {
         receipt.builtEvidence = {
-          status: "source-built-reference-only",
+          status: "reported-source-build-receipt-only",
           classification: "not-an-installed-product",
         };
       },
@@ -685,7 +688,7 @@ test("rejects candidate content outside the declared patch series or build outpu
   );
 });
 
-test("accepts source-built evidence only as a receipt, never an installed product", async (t) => {
+test("accepts reported source-build evidence only as a receipt", async (t) => {
   const world = await createWorld();
   t.after(() => cleanup(world));
 
@@ -708,7 +711,7 @@ test("accepts source-built evidence only as a receipt, never an installed produc
     productionPackaging: "disabled",
     qualification: "not-run",
     builtEvidence: {
-      status: "source-built-reference-only",
+      status: "reported-source-build-receipt-only",
       classification: "not-an-installed-product",
       installation: { status: "not-qualified", installedProduct: false },
       outputs: { buildType: "upstream-reference-only" },
@@ -721,7 +724,7 @@ test("accepts source-built evidence only as a receipt, never an installed produc
   const receipt = await qualifyCandidate(
     qualifyOptions(world, { buildEvidencePath: buildReceiptPath }),
   );
-  assert.equal(receipt.builtEvidence.status, "source-built-reference-only");
+  assert.equal(receipt.builtEvidence.status, "reported-source-build-receipt-only");
   assert.equal(receipt.builtEvidence.receiptOnly, true);
   assert.equal(receipt.builtEvidence.binariesVerified, false);
   assert.equal(receipt.builtEvidence.installedProduct, false);
@@ -750,7 +753,7 @@ test("accepts source-built evidence only as a receipt, never an installed produc
       (value) => {
         value.builtEvidence.status = "installed-product";
       },
-      /not labeled as a source-only upstream reference build/,
+      /not labeled as a reported source-build receipt only/,
     ],
   ];
   for (const [name, mutate, pattern] of tampered) {
@@ -765,7 +768,7 @@ test("accepts source-built evidence only as a receipt, never an installed produc
   }
 });
 
-test("the checked-in lock preserves five ordered patches and a patched tree pin", async () => {
+test("checked-in lock preserves five ordered patches and the locked patched tree", async () => {
   const lock = JSON.parse(
     await readFile(join(REPO_ROOT, "distribution", "composition-lock.json"), "utf8"),
   );
@@ -782,13 +785,30 @@ test("the checked-in lock preserves five ordered patches and a patched tree pin"
   assert.match(lock.repositories.happier.patchedTree, /^[a-f0-9]{40}$/);
   assert.equal(series.base.commit, lock.repositories.happier.commit);
   assert.equal(series.base.tree, lock.repositories.happier.tree);
-  assert.equal(lock.referenceArtifacts.length, 3);
-  for (const item of lock.referenceArtifacts) {
-    assert.match(item.sha256, /^[a-f0-9]{64}$/);
-  }
 });
 
-test("the existing structural verify path still reports reference-only inputs", async () => {
-  assert.ok(existsSync(join(REPO_ROOT, "distribution", "build-composition.mjs")));
-  assert.ok(existsSync(join(REPO_ROOT, "patches", "happier", "series.json")));
+test("checked-in reference artifacts remain compatibility inputs only", async () => {
+  const lock = JSON.parse(
+    await readFile(join(REPO_ROOT, "distribution", "composition-lock.json"), "utf8"),
+  );
+
+  assert.deepEqual(
+    lock.referenceArtifacts.map((item) => item.id).sort(),
+    [
+      "happier-cli-windows-x64",
+      "happier-server-windows-x64",
+      "happier-standalone-web-reference",
+    ],
+  );
+  for (const item of lock.referenceArtifacts) {
+    assert.match(item.sha256, /^[a-f0-9]{64}$/);
+    assert.match(item.sourceCommit, /^[a-f0-9]{40}$/);
+    assert.ok(item.bytes > 0);
+    assert.match(
+      item.url,
+      /^https:\/\/github\.com\/happier-dev\/happier\/releases\/download\/(cli|server|ui-web)-v\d+\.\d+\.\d+\/[A-Za-z0-9._-]+\.tar\.gz$/,
+    );
+  }
+  assert.equal(lock.repositories.happier.license.path, "LICENCE");
+  assert.match(lock.repositories.happier.license.sha256, /^[a-f0-9]{64}$/);
 });

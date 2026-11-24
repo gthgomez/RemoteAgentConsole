@@ -16,8 +16,8 @@ const SERIES_PATH = join(REPO_ROOT, SERIES_RELATIVE);
 const DEFAULT_HAPPIER = resolve(REPO_ROOT, "..", "Happier");
 const DEFAULT_BABEL = resolve(REPO_ROOT, "..", "Babel");
 // Exact-candidate qualification is split into three independent claims: source
-// identity (RAC, Babel and the patched Happier stage), source-built evidence,
-// and installer/install proof. Only the first is produced here; the other two
+// identity (RAC, Babel and the patched Happier stage), reported source-build
+// receipt evidence, and installer/install proof. Only the first is produced here; the other two
 // stay closed unless a caller supplies their own receipt.
 const EVIDENCE_FILE = "rac-composition-evidence.json";
 const SCAFFOLD_DISPOSITION = "scaffold-only-not-a-production-or-qualified-package";
@@ -594,10 +594,10 @@ function verifyRacCandidate({ racRepo, expectedCommit, lock }) {
   const origin = git(racRepo, ["remote", "get-url", "origin"]);
   const baseline = lock.repositories?.rac;
   if (!baseline?.url || !baseline.commit || !baseline.tree) {
-    fail("composition lock is missing the audited RAC baseline");
+    fail("composition lock is missing the declared RAC baseline pin");
   }
   if (canonicalRepoUrl(origin) !== canonicalRepoUrl(baseline.url)) {
-    fail(`RAC origin does not match the audited repository ${baseline.url}`);
+    fail(`RAC origin does not match the declared repository pin ${baseline.url}`);
   }
   verifyCleanRepository(racRepo, "RAC");
   const baselineTreeProbe = gitProbe(racRepo, [
@@ -609,15 +609,15 @@ function verifyRacCandidate({ racRepo, expectedCommit, lock }) {
   }
   if (baselineTreeProbe.status === 128) {
     fail(
-      `Cannot resolve the audited RAC baseline ${baseline.commit}; fetch full history instead of a shallow checkout`,
+      `Cannot resolve the declared RAC baseline pin ${baseline.commit}; fetch full history instead of a shallow checkout`,
     );
   }
   if (baselineTreeProbe.status !== 0) {
-    fail(`Cannot resolve the audited RAC baseline tree ${baseline.commit}`);
+    fail(`Cannot resolve the declared RAC baseline tree pin ${baseline.commit}`);
   }
   if (baselineTreeProbe.stdout.trim() !== baseline.tree) {
     fail(
-      `Audited RAC baseline tree mismatch: expected ${baseline.tree}, got ${baselineTreeProbe.stdout.trim()}`,
+      `Declared RAC baseline tree mismatch: expected ${baseline.tree}, got ${baselineTreeProbe.stdout.trim()}`,
     );
   }
   const containment = gitProbe(racRepo, [
@@ -629,12 +629,12 @@ function verifyRacCandidate({ racRepo, expectedCommit, lock }) {
   if (containment.error) fail(`git merge-base could not start: ${containment.error.message}`);
   if (containment.status === 128) {
     fail(
-      `Cannot resolve the audited RAC baseline ${baseline.commit}; fetch full history instead of a shallow checkout`,
+      `Cannot resolve the declared RAC baseline pin ${baseline.commit}; fetch full history instead of a shallow checkout`,
     );
   }
   if (containment.status !== 0) {
     fail(
-      `RAC selected commit ${head} does not contain the audited baseline ${baseline.commit}`,
+      `RAC selected commit ${head} does not contain the declared baseline pin ${baseline.commit}`,
     );
   }
   const lockfiles = verifyLockfilesAtHead({
@@ -648,7 +648,7 @@ function verifyRacCandidate({ racRepo, expectedCommit, lock }) {
       source: "composition-lock.json",
       commit: baseline.commit,
       tree: baseline.tree,
-      classification: "audited-baseline-provenance",
+      classification: "declared-baseline-pin-provenance",
     },
     selected: {
       root,
@@ -671,11 +671,11 @@ function verifyBabelCandidate({ babelRepo, expectedCommit, expectedTree, lock })
   const treePin = assertTreeHash(expectedTree, "Babel expected tree");
   const baseline = lock.repositories?.babel;
   if (!baseline?.url || !baseline.commit || !baseline.tree) {
-    fail("composition lock is missing the reviewed Babel baseline");
+    fail("composition lock is missing the declared Babel baseline pin");
   }
   if (commit !== baseline.commit || treePin !== baseline.tree) {
     fail(
-      "Babel expected commit/tree must equal the reviewed composition lock; moving or unreviewed refs are not accepted",
+      "Babel expected commit/tree must equal the declared composition lock pin; moving refs are not accepted",
     );
   }
   const root = git(babelRepo, ["rev-parse", "--show-toplevel"]);
@@ -684,7 +684,7 @@ function verifyBabelCandidate({ babelRepo, expectedCommit, expectedTree, lock })
   if (symbolic.error) fail(`git symbolic-ref could not start: ${symbolic.error.message}`);
   if (symbolic.status === 0) {
     fail(
-      `Babel checkout is attached to the moving ref ${symbolic.stdout.trim()}; check out the reviewed commit detached`,
+      `Babel checkout is attached to the moving ref ${symbolic.stdout.trim()}; check out the declared commit detached`,
     );
   }
   const head = git(babelRepo, ["rev-parse", "HEAD"]);
@@ -693,7 +693,7 @@ function verifyBabelCandidate({ babelRepo, expectedCommit, expectedTree, lock })
   if (tree !== treePin) fail(`Babel tree mismatch: expected ${treePin}, got ${tree}`);
   const origin = git(babelRepo, ["remote", "get-url", "origin"]);
   if (canonicalRepoUrl(origin) !== canonicalRepoUrl(baseline.url)) {
-    fail(`Babel origin does not match the reviewed repository ${baseline.url}`);
+    fail(`Babel origin does not match the declared repository pin ${baseline.url}`);
   }
   verifyCleanRepository(babelRepo, "Babel");
   const lockfiles = verifyLockfilesAtHead({
@@ -707,7 +707,7 @@ function verifyBabelCandidate({ babelRepo, expectedCommit, expectedTree, lock })
       source: "composition-lock.json",
       commit: baseline.commit,
       tree: baseline.tree,
-      classification: "reviewed-baseline-provenance",
+      classification: "declared-baseline-pin-provenance",
     },
     selected: {
       root,
@@ -1097,11 +1097,11 @@ async function verifyBuildEvidence({
     fail("Build evidence receipt improperly claims an installed downstream product");
   }
   if (
-    receipt.builtEvidence?.status !== "source-built-reference-only" ||
+    receipt.builtEvidence?.status !== "reported-source-build-receipt-only" ||
     receipt.builtEvidence?.classification !== "not-an-installed-product" ||
     receipt.builtEvidence?.installedProduct === true
   ) {
-    fail("Build evidence is not labeled as a source-only upstream reference build");
+    fail("Build evidence is not labeled as a reported source-build receipt only");
   }
   if (receipt.buildReadiness?.matchesPin !== true) {
     fail("Build evidence was not produced with the exact pinned toolchain");
@@ -1110,7 +1110,7 @@ async function verifyBuildEvidence({
     fail("Build evidence does not identify an upstream-reference-only build");
   }
   return {
-    status: "source-built-reference-only",
+    status: "reported-source-build-receipt-only",
     receiptSha256: sha256Bytes(bytes),
     receiptOnly: true,
     binariesVerified: false,
@@ -1215,7 +1215,7 @@ export async function stageCandidate({
     qualification: "not-run",
     builtEvidence: referenceBuild
       ? {
-          status: "source-built-reference-only",
+          status: "reported-source-build-receipt-only",
           classification: "not-an-installed-product",
           installedProduct: false,
           receiptOnly: true,
@@ -1304,7 +1304,7 @@ export async function qualifyCandidate({
             source: "composition-lock.json",
             commit: lock.repositories?.babel?.commit ?? null,
             tree: lock.repositories?.babel?.tree ?? null,
-            classification: "reviewed-baseline-provenance",
+            classification: "declared-baseline-pin-provenance",
           },
           selected: null,
           identityBound: false,
@@ -1396,16 +1396,22 @@ export async function qualifyCandidate({
       note:
         "The receipt binds the selected commits, trees and recomputed patched tree. It does not certify the originating source worktree as clean.",
     },
+    trustBoundary: {
+      classification: "structural-pr-check",
+      baselinePins: "declared-by-selected-rac-commit",
+      trustedMergeGate: false,
+      independentApproval: false,
+    },
     components: { rac, babel, happier },
     structuralChecks: {
       status: "pass",
       checks: [
         "rac-exact-explicit-head",
-        "rac-clean-and-contains-audited-baseline",
+        "rac-clean-and-contains-declared-baseline-pin",
         "rac-lockfile-matches-baseline-pin",
         "lock-series-and-patch-bytes-from-selected-rac-commit",
         scope === "composition"
-          ? "babel-detached-reviewed-commit-and-tree"
+          ? "babel-detached-declared-commit-and-tree-pin"
           : "babel-scope-excluded-no-coverage-claim",
         "happier-pinned-base-commit-and-tree",
         "happier-five-ordered-patch-series",

@@ -5,7 +5,9 @@ on:
     paths:
       - ".github/workflows/composition.yml"
       - "distribution/**"
+      - "package.json"
       - "patches/happier/**"
+      - "pnpm-lock.yaml"
       - "profiles/**"
       - "qualification/**"
       - "tools/export-rac-history.mjs"
@@ -14,7 +16,9 @@ on:
     paths:
       - ".github/workflows/composition.yml"
       - "distribution/**"
+      - "package.json"
       - "patches/happier/**"
+      - "pnpm-lock.yaml"
       - "profiles/**"
       - "qualification/**"
       - "tools/export-rac-history.mjs"
@@ -41,8 +45,8 @@ jobs:
           # Composition qualification checks the PR source head, not the
           # synthetic merge checkout used by ordinary product CI.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          # Candidate qualification checks that the audited RAC baseline is an
-          # ancestor of the selected commit, so the checkout cannot be shallow.
+          # Candidate qualification checks that the declared RAC baseline pin is
+          # an ancestor of the selected commit, so the checkout cannot be shallow.
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -69,6 +73,15 @@ jobs:
       - name: Fetch versioned reference archives
         shell: pwsh
         run: |
+          $ProgressPreference = 'SilentlyContinue'
+          function Test-ReferenceArchive {
+            param([string]$Path, [string]$ExpectedSha256, [long]$ExpectedBytes)
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+            $info = Get-Item -LiteralPath $Path
+            if ($info.Length -ne $ExpectedBytes) { return $false }
+            $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+            return $actual -ieq $ExpectedSha256
+          }
           $lock = Get-Content -Raw distribution/composition-lock.json | ConvertFrom-Json
           $cache = Join-Path $env:RUNNER_TEMP 'rac-reference-artifacts'
           New-Item -ItemType Directory -Force -Path $cache | Out-Null
@@ -80,8 +93,32 @@ jobs:
               throw 'Invalid versioned upstream archive URL'
             }
             $archive = Join-Path $cache $item.fileName
-            if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
-              Invoke-WebRequest -Uri $item.url -OutFile $archive
+            if (Test-ReferenceArchive -Path $archive -ExpectedSha256 $item.sha256 -ExpectedBytes $item.bytes) {
+              Write-Host "Using verified cached reference artifact $($item.id)"
+              continue
+            }
+            if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
+            $temp = Join-Path $env:RUNNER_TEMP ("rac-artifact-" + [guid]::NewGuid().ToString('N') + '.tmp')
+            $verified = $false
+            try {
+              for ($attempt = 1; $attempt -le 3; $attempt++) {
+                try {
+                  if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
+                  Invoke-WebRequest -Uri $item.url -OutFile $temp -TimeoutSec 120 -ErrorAction Stop
+                  if (Test-ReferenceArchive -Path $temp -ExpectedSha256 $item.sha256 -ExpectedBytes $item.bytes) {
+                    $verified = $true
+                    break
+                  }
+                  Write-Warning "Reference artifact $($item.id) failed verification on attempt $attempt"
+                } catch {
+                  Write-Warning "Reference artifact $($item.id) download failed on attempt ${attempt}: $($_.Exception.Message)"
+                }
+                if ($attempt -lt 3) { Start-Sleep -Seconds (2 * $attempt) }
+              }
+              if (-not $verified) { throw "Unable to fetch and verify reference artifact $($item.id)" }
+              Move-Item -LiteralPath $temp -Destination $archive -Force
+            } finally {
+              if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
             }
           }
       - name: Stage the pinned source and verify fixtures
@@ -98,10 +135,43 @@ jobs:
         env:
           RAC_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
+          $cache = Join-Path $env:RUNNER_TEMP 'rac-reference-artifacts'
           $stage = Join-Path $env:RUNNER_TEMP 'rac-composition-stage'
           $receipt = Join-Path $env:RUNNER_TEMP 'rac-codex-only-qualification.json'
-          node distribution/build-composition.mjs qualify --scope codex-only --rac-repo . --rac-commit $env:RAC_HEAD_SHA --candidate $stage --output $receipt
+          node distribution/build-composition.mjs qualify --scope codex-only --rac-repo . --rac-commit $env:RAC_HEAD_SHA --candidate $stage --artifact-dir $cache --output $receipt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish source-only qualification summary
+        shell: pwsh
+        run: |
+          $receiptPath = Join-Path $env:RUNNER_TEMP 'rac-codex-only-qualification.json'
+          if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { throw 'Missing qualification receipt' }
+          $receipt = Get-Content -Raw $receiptPath | ConvertFrom-Json
+          $lines = @(
+            '### Composition source-only qualification',
+            '',
+            'Structural source evidence only. Not an installed product, build verification, independent approval, or trusted merge gate.',
+            '',
+            "- Scope: ``$($receipt.scope)``",
+            "- Disposition: ``$($receipt.disposition)``",
+            "- Trust boundary: ``$($receipt.trustBoundary.classification)`` / trusted merge gate: ``$($receipt.trustBoundary.trustedMergeGate)``",
+            "- RAC head: ``$($receipt.components.rac.selected.commit)``",
+            "- RAC tree: ``$($receipt.components.rac.selected.tree)``",
+            "- Happier base commit: ``$($receipt.components.happier.selected.commit)``",
+            "- Happier base tree: ``$($receipt.components.happier.selected.tree)``",
+            "- Happier patched tree: ``$($receipt.components.happier.selected.patchedTree)``",
+            "- Lock SHA-256: ``$($receipt.inputs.lock.sha256)``",
+            "- Patch series SHA-256: ``$($receipt.inputs.patchSeries.sha256)``",
+            "- Babel: ``$($receipt.components.babel.scope)`` / ``$($receipt.coverage.babel)``",
+            "- Built evidence: ``$($receipt.builtEvidence.status)``",
+            "- Installed product: ``$($receipt.installation.installedProduct)``",
+            "- Reference archive verification: ``$($receipt.referenceArtifacts.status)``",
+            '',
+            '#### Reference artifacts (compatibility inputs only)'
+          )
+          foreach ($item in $receipt.referenceArtifacts.items) {
+            $lines += "- ``$($item.id)`` — ``$($item.sha256)`` ($($item.bytes) bytes)"
+          }
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Test exact-candidate qualification controller
         run: node --test qualification/composition.test.mjs
       - name: Check legacy history export
