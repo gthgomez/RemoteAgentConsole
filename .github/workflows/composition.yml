@@ -31,9 +31,19 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}/rac
     steps:
       - uses: actions/checkout@v4
         with:
+          path: rac
+          # Composition qualification checks the PR source head, not the
+          # synthetic merge checkout used by ordinary product CI.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Candidate qualification checks that the audited RAC baseline is an
+          # ancestor of the selected commit, so the checkout cannot be shallow.
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -50,12 +60,12 @@ jobs:
         with:
           repository: happier-dev/happier
           ref: ${{ steps.pin.outputs.commit }}
-          path: upstream-happier
+          path: happier
           persist-credentials: false
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/rac-reference-artifacts
-          key: rac-reference-artifacts-${{ hashFiles('distribution/composition-lock.json') }}
+          key: rac-reference-artifacts-${{ hashFiles('rac/distribution/composition-lock.json') }}
       - name: Fetch versioned reference archives
         shell: pwsh
         run: |
@@ -79,8 +89,20 @@ jobs:
         run: |
           $cache = Join-Path $env:RUNNER_TEMP 'rac-reference-artifacts'
           $stage = Join-Path $env:RUNNER_TEMP 'rac-composition-stage'
-          node distribution/build-composition.mjs stage --happier-repo upstream-happier --artifact-dir $cache --output $stage
+          node distribution/build-composition.mjs stage --happier-repo ../happier --artifact-dir $cache --output $stage
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node qualification/run-fixtures.mjs --happier-repo upstream-happier --artifact-dir $cache --candidate $stage
+          node qualification/run-fixtures.mjs --happier-repo ../happier --artifact-dir $cache --candidate $stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Qualify the exact codex-only candidate
+        shell: pwsh
+        env:
+          RAC_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'rac-composition-stage'
+          $receipt = Join-Path $env:RUNNER_TEMP 'rac-codex-only-qualification.json'
+          node distribution/build-composition.mjs qualify --scope codex-only --rac-repo . --rac-commit $env:RAC_HEAD_SHA --candidate $stage --output $receipt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test exact-candidate qualification controller
+        run: node --test qualification/composition.test.mjs
       - name: Check legacy history export
         run: node --test qualification/migration.test.ts

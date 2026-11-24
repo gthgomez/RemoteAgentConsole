@@ -21,6 +21,7 @@
       "url": "https://github.com/happier-dev/happier.git",
       "commit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
       "tree": "911bdc3c673608490b932bd939166d88f198066a",
+      "patchedTree": "c62fcb80464a0b7161efb4c09bdcbd8d9506bea4",
       "lockfiles": {
         "yarn.lock": "ca4cd35cc3737beba3a8b14a5fd5d233fbc90b8bb11dc1cdfd91d233a9e347c6"
       },
