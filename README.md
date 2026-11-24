@@ -2,6 +2,8 @@
 
 A local-first control plane for coding-agent sessions. The host runs agents on your computer; the mobile-first PWA controls them through the host API.
 
+The next release uses a [pinned Happier composition](docs/decisions/maintained-controller.md) for the relay, daemon and phone interface. The commands below describe the legacy host and its development fixtures. See [the composition lock](distribution/composition-lock.json) for the selected source and upstream archives.
+
 ## Requirements
 
 - Node.js 22 through 24

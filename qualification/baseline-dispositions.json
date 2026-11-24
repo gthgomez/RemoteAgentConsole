@@ -1,0 +1,677 @@
+{
+  "schemaVersion": 1,
+  "observedOn": "2026-11-24",
+  "scope": "Current selected source and reference artifact reconciliation. Finding acceptance remains open until it is proven against the integrated candidate.",
+  "repositories": {
+    "RAC": {
+      "auditedCommit": "66a8501f0ef704498bf973e63965909c2ccf3514",
+      "selectedCommit": "66a8501f0ef704498bf973e63965909c2ccf3514",
+      "verifiedTargetFiles": 33,
+      "changedTargetPaths": [],
+      "otherChangedPaths": [],
+      "openPullRequests": []
+    },
+    "Babel": {
+      "auditedCommit": "9f20004c8ed8d6e7c26958c93b02f84580a47ba2",
+      "selectedCommit": "b7611af8cf0a7756cbd2bd13260fee01b4c6de03",
+      "verifiedTargetFiles": 33,
+      "changedTargetPaths": [],
+      "otherChangedPaths": [
+        ".github/workflows/release.yml",
+        "POLICY_MANIFEST.json",
+        "babel-cli/src/ui/pastePlaceholders.test.ts",
+        "babel-cli/src/ui/pastePlaceholders.ts",
+        "babel-cli/src/ui/promptInput.test.ts",
+        "babel-cli/src/ui/promptInput.ts",
+        "babel-cli/src/ui/promptVisualRange.test.ts",
+        "babel-cli/src/ui/promptVisualRange.ts",
+        "config/architectural-budget/README.md",
+        "docs/README.md",
+        "docs/guides/ARCHITECTURAL_SIZE_ADVISORY.md",
+        "tools/check-architectural-budget.ps1",
+        "tools/preflight-ratchet.ps1",
+        "tools/tests/architectural-budget.test.mjs"
+      ],
+      "openPullRequests": [
+        {
+          "number": 569,
+          "draft": true,
+          "base": "main",
+          "baseSha": "b7611af8cf0a7756cbd2bd13260fee01b4c6de03",
+          "head": "e40bc44bf2d82aac95af769c9027a8132392a1e9"
+        },
+        {
+          "number": 568,
+          "draft": true,
+          "base": "main",
+          "baseSha": "b7611af8cf0a7756cbd2bd13260fee01b4c6de03",
+          "head": "edb9f79c8a63db698dde2d3d3a390abe91e58ef7"
+        },
+        {
+          "number": 567,
+          "draft": true,
+          "base": "main",
+          "baseSha": "b7611af8cf0a7756cbd2bd13260fee01b4c6de03",
+          "head": "200a4c04acb8f72dbfe496084b41857132eaa370"
+        },
+        {
+          "number": 564,
+          "draft": true,
+          "base": "main",
+          "baseSha": "1f738cc3d30d0c0b772ba994556b8a1c20fb31e7",
+          "head": "3e1739626ed5909bce83413655edee9c334dd9de"
+        },
+        {
+          "number": 563,
+          "draft": true,
+          "base": "main",
+          "baseSha": "1f738cc3d30d0c0b772ba994556b8a1c20fb31e7",
+          "head": "cf578eb33cfda7a4982dac230650a41271c5fa15"
+        },
+        {
+          "number": 562,
+          "draft": true,
+          "base": "main",
+          "baseSha": "1f738cc3d30d0c0b772ba994556b8a1c20fb31e7",
+          "head": "9e475dab6a2cc84ff3973eefb38cef665a2e2656"
+        },
+        {
+          "number": 542,
+          "draft": true,
+          "base": "main",
+          "baseSha": "c74adfd94d8c899086419e4ce32871993044afc8",
+          "head": "0823da2f73d372b0a55f600184abdfd1a9c3fc95"
+        },
+        {
+          "number": 519,
+          "draft": true,
+          "base": "main",
+          "baseSha": "198193b1545682da66eae50f34f72aae4155aa8f",
+          "head": "969259f9b35445d45ee93df3a2847483ffe30566"
+        },
+        {
+          "number": 516,
+          "draft": true,
+          "base": "main",
+          "baseSha": "198193b1545682da66eae50f34f72aae4155aa8f",
+          "head": "5865bf0833f020a3037c3304d965a0e625a753da"
+        }
+      ]
+    },
+    "Happier": {
+      "auditedCommit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+      "selectedCommit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+      "verifiedTargetFiles": 83,
+      "changedTargetPaths": [],
+      "otherChangedPaths": [],
+      "observedDefaultHead": "b48d051b86dd36d4c01fe590e8e23b090809091a",
+      "openPullRequestScope": {
+        "totalOpen": 47,
+        "baseBranches": ["dev", "v0.3"],
+        "selectedCommitBaseCount": 0,
+        "disposition": "All open PR filenames were compared against the 83 audited Happier target files. Overlaps are references for future upstream reconciliation. The composition remains on the selected v0.2.21 source."
+      },
+      "overlappingOpenPullRequests": [
+        {
+          "base": "dev",
+          "baseSha": "1513c3445d377986005b87bc3a41551938da9c50",
+          "draft": false,
+          "head": "a593833bc2f5125af0453e75be87b8d3d8e0fc65",
+          "number": 1006,
+          "affectedPaths": ["apps/cli/src/backends/codex/appServer/runtime.ts"]
+        },
+        {
+          "base": "dev",
+          "baseSha": "1513c3445d377986005b87bc3a41551938da9c50",
+          "draft": false,
+          "head": "969934551c79490cd2c01e78cefd77dfdc49fbdb",
+          "number": 1004,
+          "affectedPaths": ["apps/ui/sources/components/sessions/shell/SessionView.tsx"]
+        },
+        {
+          "base": "dev",
+          "baseSha": "1513c3445d377986005b87bc3a41551938da9c50",
+          "draft": false,
+          "head": "02f29357effb1b214a02361327b031fba4dd76a6",
+          "number": 1002,
+          "affectedPaths": ["apps/cli/src/daemon/startDaemon.ts"]
+        },
+        {
+          "base": "dev",
+          "baseSha": "1513c3445d377986005b87bc3a41551938da9c50",
+          "draft": false,
+          "head": "ff54d705fb4d74fea88f337f41f7311f1956b418",
+          "number": 1001,
+          "affectedPaths": ["apps/cli/src/daemon/startDaemon.ts"]
+        },
+        {
+          "base": "dev",
+          "baseSha": "a5402e746af1efe64cbd73ddc9230c3a968edf36",
+          "draft": false,
+          "head": "bcef090568488e269c3d2954d2ee7922f5e475e4",
+          "number": 958,
+          "affectedPaths": [
+            "apps/cli/src/agent/acp/AcpBackend.ts",
+            "apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.ts",
+            "packages/agents/src/manifest.ts"
+          ]
+        },
+        {
+          "base": "dev",
+          "baseSha": "793cee37a0ad61e357b1df0b760acd935ab7a033",
+          "draft": false,
+          "head": "28e2bdbb214bcfa5b24db1b73abe3917263e083d",
+          "number": 867,
+          "affectedPaths": ["apps/ui/sources/components/sessions/agentInput/AgentInput.tsx"]
+        },
+        {
+          "base": "dev",
+          "baseSha": "793cee37a0ad61e357b1df0b760acd935ab7a033",
+          "draft": false,
+          "head": "b5b7d9f9d982cd45130b3156e1651dc4ddff661e",
+          "number": 801,
+          "affectedPaths": ["apps/cli/src/cli/commands/daemon.ts"]
+        },
+        {
+          "base": "dev",
+          "baseSha": "793cee37a0ad61e357b1df0b760acd935ab7a033",
+          "draft": false,
+          "head": "4934a8aeeb850599b4f15fe4bcb801418a41508d",
+          "number": 619,
+          "affectedPaths": [
+            "apps/cli/src/api/apiMachine.ts",
+            "apps/cli/src/api/machine/rpcHandlers.ts",
+            "apps/cli/src/daemon/startDaemon.ts",
+            "packages/protocol/src/rpc.ts"
+          ]
+        },
+        {
+          "base": "dev",
+          "baseSha": "793cee37a0ad61e357b1df0b760acd935ab7a033",
+          "draft": false,
+          "head": "dcaeff1291bdafd128b86a03cec6f23f0cba579f",
+          "number": 115,
+          "affectedPaths": ["apps/cli/src/daemon/startDaemon.ts"]
+        }
+      ]
+    }
+  },
+  "sourceVerification": {
+    "command": "python scripts/verify-packet.py --source-root <checkout-parent>",
+    "result": "PASS",
+    "checks": 1033,
+    "manifestTargetFiles": 149,
+    "capturedHappierFiles": 124
+  },
+  "findings": [
+    {
+      "id": "RAC-001",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C10"]
+    },
+    {
+      "id": "RAC-002",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C03", "C10"]
+    },
+    {
+      "id": "RAC-003",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C10"]
+    },
+    {
+      "id": "RAC-004",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C10"]
+    },
+    {
+      "id": "RAC-005",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C10"]
+    },
+    {
+      "id": "RAC-006",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C10"]
+    },
+    {
+      "id": "RAC-007",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C04", "C05"]
+    },
+    {
+      "id": "RAC-008",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C04", "C10"]
+    },
+    {
+      "id": "RAC-009",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_platform_requirement_not_executed_on_windows",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C04"]
+    },
+    {
+      "id": "RAC-010",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C13"]
+    },
+    {
+      "id": "RAC-011",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C04", "C14"]
+    },
+    {
+      "id": "RAC-012",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_crash_windows_not_fault_injected",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C10"]
+    },
+    {
+      "id": "RAC-013",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C10", "C12"]
+    },
+    {
+      "id": "RAC-014",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_missing_journey_capability",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C11", "C12"]
+    },
+    {
+      "id": "RAC-015",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C10", "C12"]
+    },
+    {
+      "id": "RAC-016",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_confirmed_against_official_acp_semantics",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C10"]
+    },
+    {
+      "id": "RAC-017",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_documented_missing",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C06", "C07", "C09", "C10"]
+    },
+    {
+      "id": "RAC-018",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C04", "C13"]
+    },
+    {
+      "id": "RAC-019",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_risk_requires_pressure_fixture",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C13"]
+    },
+    {
+      "id": "RAC-020",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C10", "C12"]
+    },
+    {
+      "id": "RAC-021",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_mobile_behavior_unverified",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C10", "C12"]
+    },
+    {
+      "id": "RAC-022",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C12", "C14"]
+    },
+    {
+      "id": "RAC-023",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C12"]
+    },
+    {
+      "id": "RAC-024",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C12", "C13"]
+    },
+    {
+      "id": "RAC-025",
+      "repository": "RAC",
+      "baselineEvidence": "static_layout_risk_not_visual_measurement",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C12", "C16"]
+    },
+    {
+      "id": "RAC-026",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_platform_constraint",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C04", "C05"]
+    },
+    {
+      "id": "RAC-027",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_not_run_on_windows",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C15"]
+    },
+    {
+      "id": "RAC-028",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_missing_operation_path",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C04", "C14"]
+    },
+    {
+      "id": "RAC-029",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_policy_gap",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C02", "C03", "C10"]
+    },
+    {
+      "id": "RAC-030",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_hardening_not_auth_bypass",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C02", "C03"]
+    },
+    {
+      "id": "RAC-031",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static_swap_scenario_not_executed",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C02", "C11"]
+    },
+    {
+      "id": "RAC-032",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C13", "C14"]
+    },
+    {
+      "id": "RAC-033",
+      "repository": "RAC",
+      "baselineEvidence": "reproduced_in_root_lab_at_adapter_layer",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C06", "C07", "C09", "C12"]
+    },
+    {
+      "id": "RAC-034",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C12"]
+    },
+    {
+      "id": "RAC-035",
+      "repository": "RAC",
+      "baselineEvidence": "verified_evidence_gap",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C16", "C17"]
+    },
+    {
+      "id": "RAC-036",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C05", "C13"]
+    },
+    {
+      "id": "BABEL-001",
+      "repository": "Babel",
+      "baselineEvidence": "static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C07", "C09"]
+    },
+    {
+      "id": "BABEL-002",
+      "repository": "Babel",
+      "baselineEvidence": "tested-isolated-linux-plus-static-windows",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C04", "C08"]
+    },
+    {
+      "id": "BABEL-003",
+      "repository": "Babel",
+      "baselineEvidence": "tested-isolated-linux-plus-static-windows",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C04", "C08"]
+    },
+    {
+      "id": "BABEL-004",
+      "repository": "Babel",
+      "baselineEvidence": "tested-isolated",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C08"]
+    },
+    {
+      "id": "BABEL-005",
+      "repository": "Babel",
+      "baselineEvidence": "static-complete-call-path",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C08"]
+    },
+    {
+      "id": "BABEL-006",
+      "repository": "Babel",
+      "baselineEvidence": "tested-isolated",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C08", "C11"]
+    },
+    {
+      "id": "BABEL-007",
+      "repository": "Babel",
+      "baselineEvidence": "static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C08", "C09"]
+    },
+    {
+      "id": "BABEL-008",
+      "repository": "Babel",
+      "baselineEvidence": "static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C08", "C09"]
+    },
+    {
+      "id": "BABEL-009",
+      "repository": "Babel",
+      "baselineEvidence": "tested-lease-plus-static-idempotency",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C08", "C09", "C10"]
+    },
+    {
+      "id": "BABEL-010",
+      "repository": "Babel",
+      "baselineEvidence": "static-reference-search",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C08", "C11"]
+    },
+    {
+      "id": "BABEL-011",
+      "repository": "Babel",
+      "baselineEvidence": "static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C09", "C12"]
+    },
+    {
+      "id": "BABEL-012",
+      "repository": "Babel",
+      "baselineEvidence": "static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C05", "C06"]
+    },
+    {
+      "id": "BABEL-013",
+      "repository": "Babel",
+      "baselineEvidence": "static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C08", "C09", "C10"]
+    },
+    {
+      "id": "BABEL-014",
+      "repository": "Babel",
+      "baselineEvidence": "unknown-in-this-audit",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C16"]
+    },
+    {
+      "id": "INT-001",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C01", "C07", "C09"]
+    },
+    {
+      "id": "INT-002",
+      "repository": "RAC",
+      "baselineEvidence": "source_plus_official_protocol_documentation",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C06"]
+    },
+    {
+      "id": "INT-003",
+      "repository": "RAC",
+      "baselineEvidence": "verified_static",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C03", "C12"]
+    },
+    {
+      "id": "HAP-001",
+      "repository": "Happier",
+      "baselineEvidence": "verified deployment-policy gap",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C02"]
+    },
+    {
+      "id": "HAP-002",
+      "repository": "Happier",
+      "baselineEvidence": "verified deployment-policy gap",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C02", "C11"]
+    },
+    {
+      "id": "HAP-003",
+      "repository": "Happier",
+      "baselineEvidence": "verified deployment-policy gap",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C02"]
+    },
+    {
+      "id": "HAP-004",
+      "repository": "Happier",
+      "baselineEvidence": "verified deployment-policy gap",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C02"]
+    },
+    {
+      "id": "HAP-005",
+      "repository": "Happier",
+      "baselineEvidence": "verified generic behavior; required Babel-specific correction",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C09", "C10"]
+    },
+    {
+      "id": "HAP-006",
+      "repository": "Happier",
+      "baselineEvidence": "verified integration gap",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C02", "C09"]
+    },
+    {
+      "id": "HAP-007",
+      "repository": "Happier",
+      "baselineEvidence": "verified retry path; required new-bridge idempotency boundary",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C09", "C10"]
+    },
+    {
+      "id": "HAP-008",
+      "repository": "Happier",
+      "baselineEvidence": "verified architecture-decision correction",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C00", "C01", "C04"]
+    },
+    {
+      "id": "HAP-009",
+      "repository": "Happier",
+      "baselineEvidence": "verified capability boundary",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C07", "C12"]
+    },
+    {
+      "id": "HAP-010",
+      "repository": "Happier",
+      "baselineEvidence": "verified compatibility requirement",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C07"]
+    },
+    {
+      "id": "HAP-011",
+      "repository": "Happier",
+      "baselineEvidence": "verified authentication-contract gap in inspected stable paths",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C03"]
+    },
+    {
+      "id": "HAP-012",
+      "repository": "Happier",
+      "baselineEvidence": "verified generic policy behavior on native ACP requestPermission; required Command Code and Babel strict-profile correction",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C02", "C05", "C09"]
+    },
+    {
+      "id": "HAP-013",
+      "repository": "Happier",
+      "baselineEvidence": "verified-source composition requirement; no Windows execution",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C04", "C14"]
+    },
+    {
+      "id": "HAP-014",
+      "repository": "Happier",
+      "baselineEvidence": "verified-source intentional upstream behavior; not an upstream defect by itself; no Windows execution",
+      "currentDisposition": "SOURCE_RECHECKED_ACCEPTANCE_PENDING",
+      "tasks": ["C04", "C14"]
+    }
+  ]
+}

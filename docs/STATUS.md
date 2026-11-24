@@ -1,5 +1,9 @@
 # Status
 
+## Maintained-controller integration
+
+The November 24 campaign selects a [pinned Happier composition](decisions/maintained-controller.md). The pinned source, affected-file hashes and upstream Windows archive digests were checked on Linux. The restricted build, native runtime checks, migration and Android-over-cellular qualification are pending. The milestones below describe the legacy host.
+
 ## Current milestone
 
 Milestones 0 and 1 are complete. The deterministic fake ACP agent works through the host REST/SSE API and mobile PWA, including permissions, cancellation, process failure, reconnect, reload, and continued prompting. SQLite persists sessions, event replay, idempotency, and device auth state across host restarts. Device pairing and authenticated REST/SSE work in the PWA. Milestones 2 and 3 remain in progress: Command Code and OpenCode create sessions through the host, but real prompt/permission compatibility remains to be verified.
