@@ -1,0 +1,16 @@
+diff --git a/packages/agents/src/manifest.ts b/packages/agents/src/manifest.ts
+index 0fe5acc..b2fe7f6 100644
+--- a/packages/agents/src/manifest.ts
++++ b/packages/agents/src/manifest.ts
+@@ -146,6 +146,11 @@ export const AGENTS_CORE = {
+                 appServer: {
+                     kind: 'appServer',
+                     overrides: {
++                        // Pinned Codex 0.171.0 stable app-server has no thread rollback method.
++                        // Do not advertise rollback until a version-aware capability exists.
++                        sessionCapabilities: {
++                            sessionRollback: { conversation: 'unsupported' },
++                        },
+                         localControl: { supported: true, topology: 'shared', attachStrategy: 'provider_attach' },
+                     },
+                 },
