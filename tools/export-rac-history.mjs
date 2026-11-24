@@ -142,7 +142,9 @@ export async function exportRacHistory({ sourceCopy, output }) {
       });
       const counts = {};
       for (const [type, table, columns, orderBy, filter = "1"] of records) {
-        const lengths = columns.map((column) => `length(CAST(${column.split(" AS ")[0]} AS BLOB))`);
+        const lengths = columns.map(
+          (column) => `COALESCE(length(CAST(${column.split(" AS ")[0]} AS BLOB)), 0)`,
+        );
         const oversized = database
           .prepare(
             `SELECT 1 FROM ${table} WHERE (${filter}) AND max(${lengths.join(", ")}) > ? LIMIT 1`,

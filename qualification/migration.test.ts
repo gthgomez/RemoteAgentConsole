@@ -101,7 +101,9 @@ test("detects oversized history before publishing or modifying the backup", asyn
     setupDatabase(source);
     const db = new DatabaseSync(source);
     try {
-      db.exec("UPDATE turns SET prompt = CAST(zeroblob(8388609) AS TEXT) WHERE id = 'turn-a'");
+      db.exec(
+        "UPDATE turns SET status = NULL, prompt = CAST(zeroblob(8388609) AS TEXT) WHERE id = 'turn-a'",
+      );
     } finally {
       db.close();
     }
