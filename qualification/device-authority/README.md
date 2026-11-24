@@ -61,12 +61,12 @@ The fixture:
 1. extracts the patched issuer, shared claim contract, and closure, reconstructs the
    modified verifier from the 0002 base plus 0006 hunks, rewrites relative TypeScript
    specifiers for Node execution, and runs them against a synthetic store;
-2. proves digest-only storage, expected-kind binding (phone cannot redeem host and
-   host cannot redeem phone), admission-time expiry, one-time redemption, lost-response
-   recovery, pending cap, cleanup retention, terminal-generation revocation, and
-   stale/foreign denial;
+2. proves digest-only storage, both expected-kind directions (host cannot redeem a
+   phone enrollment and phone cannot redeem a host enrollment), admission-time
+   expiry, one-time redemption, lost-response recovery, pending cap, cleanup
+   retention, terminal-generation revocation, and stale/foreign denial;
 3. verifies the strict shared claim parser/date bound accepts issuer output and rejects
-   extra keys, non-RFC UUIDs, expired claims, and over-long lifetimes;
+   extra keys, non-RFC UUIDs, a parser-valid expired claim, and over-long lifetimes;
 4. applies the 0002 + 0006 SQLite migrations to a file database, verifies the new
    indexes, and exercises rollback, two separate connections, expected-kind claim,
    admission expiry, foreign/stale revocation, terminal revocation, and bounded cleanup;
@@ -75,8 +75,20 @@ The fixture:
 6. asserts structurally that the patch adds no route/listener/ambient env read, no
    plaintext secret column, no legacy issuance call, and no `series.json` edit.
 
-The three executable TypeScript modules also pass a standalone
-`tsc --strict --erasableSyntaxOnly` check using a minimal `node:crypto` declaration.
+The offline fixture executes the extracted TypeScript modules through Node's built-in
+type stripping against the synthetic store. No separate compiler result is claimed.
+
+## Upstream added tests — NOT_RUN
+
+Neither upstream test file added by this patch was executed in this workspace:
+
+- `apps/server/sources/app/auth/restrictedDeviceEnrollment.test.ts` — Vitest unit;
+  **NOT_RUN**.
+- `apps/server/sources/app/auth/restrictedDeviceAuthority.integration.spec.ts` —
+  SQLite Prisma/auth integration spec; **NOT_RUN**.
+
+The offline qualification executes only extracted production modules against synthetic
+storage and SQL fixtures. It does not substitute for either upstream test.
 
 ## Selected server integration spec — NOT_RUN
 
@@ -137,8 +149,9 @@ Observed: `PASS`, 14 changed paths, disposable index only; no objects or refs wr
 
 ## Not run
 
-- the selected Vitest integration spec against a generated SQLite Prisma client and
-  the real auth module;
+- the upstream Vitest unit `apps/server/sources/app/auth/restrictedDeviceEnrollment.test.ts`;
+- the selected Prisma/auth integration spec
+  `apps/server/sources/app/auth/restrictedDeviceAuthority.integration.spec.ts`;
 - Happier server typecheck/build, DB-contract suite, and full unit suite;
 - protected local IPC or launcher binding;
 - in-flight decision and upload fencing.

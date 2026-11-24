@@ -12,6 +12,7 @@ const grantPatchPath = join(root, 'patches', 'happier', '0002-require-current-de
 const sqliteGrantMigration = 'apps/server/prisma/sqlite/migrations/20261124162000_add_restricted_device_grants/migration.sql';
 const sqliteEnrollmentMigration = 'apps/server/prisma/sqlite/migrations/20261124193000_add_restricted_device_enrollments/migration.sql';
 const serverSpecPath = 'apps/server/sources/app/auth/restrictedDeviceAuthority.integration.spec.ts';
+const unitSpecPath = 'apps/server/sources/app/auth/restrictedDeviceEnrollment.test.ts';
 
 const authorityIncarnation = 'ca3f8c09-6cca-4042-a47a-978a8c2950ac';
 const replacementIncarnation = '3a8f4d42-2b8e-4fff-8bd2-2fc44d6655c9';
@@ -322,6 +323,16 @@ test('closure persists a digest, binds expected kind, and redeems once', async (
     assert.equal(ctx.grants[0].kind, 'host');
     assert.equal(await rejectionCode(redeem(ctx, pending.secret, 'host')), 'enrollment-not-usable');
     assert.equal(ctx.grants.length, 1);
+
+    const phonePending = await ctx.authority.createEnrollment({ accountId, kind: 'phone' });
+    const phoneRow = ctx.enrollments.find(row => row.id === phonePending.enrollmentId);
+    assert.equal(await rejectionCode(redeem(ctx, phonePending.secret, 'host')), 'enrollment-not-usable');
+    assert.equal(phoneRow.consumedAt, null);
+    assert.equal(ctx.grants.length, 1);
+    await assert.doesNotReject(redeem(ctx, phonePending.secret, 'phone'));
+    assert.equal(ctx.grants.length, 2);
+    assert.equal(ctx.grants[1].kind, 'phone');
+    assert.notEqual(phoneRow.consumedAt, null);
     summary.checks += 1;
 });
 
@@ -441,6 +452,20 @@ test('issuer output is accepted by the strict verifier parser and date bound', a
         issuedAtMs: startMs,
         expiresAtMs: startMs + contract.MAX_DEVICE_CLAIM_LIFETIME_MS + 1,
     }, startMs), false);
+    const expiredClaims = {
+        ...claims,
+        issuedAtMs: startMs - 120_000,
+        expiresAtMs: startMs - 60_000,
+    };
+    assert.deepEqual(parseRestrictedDeviceGrantClaims(expiredClaims), expiredClaims);
+    assert.equal(areRestrictedDeviceClaimTimesUsable(expiredClaims, startMs), false);
+    assert.equal(await verifier.verifyRestrictedDeviceGrant({
+        authorityIncarnation,
+        userId: accountId,
+        signedExtras: expiredClaims,
+        nowMs: startMs,
+        lookupGrant: async () => ctx.grants[0],
+    }), null);
     assert.equal(await verifier.verifyRestrictedDeviceGrant({
         authorityIncarnation: replacementIncarnation,
         userId: accountId,
@@ -602,6 +627,9 @@ test('sqlite migrations support rollback, separate connections, kind, expiry, an
 
 test('selected app-server integration spec is present and explicitly gated by prerequisites', () => {
     const spec = addedText(patchFiles, serverSpecPath);
+    const unitSpec = addedText(patchFiles, unitSpecPath);
+    assert.match(unitSpec, /describe\(/);
+    assert.match(unitSpec, /restricted device authority lifecycle/);
     assert.match(spec, /createLightSqliteHarness/);
     assert.match(spec, /initAuth: true/);
     assert.match(spec, /auth\.getRestrictedDeviceAuthority\(\)/);
@@ -691,20 +719,27 @@ after(() => {
         checks: summary.checks,
         expectedChecks,
         scope: 'offline execution of patched issuer, verifier, and SQL fixtures; synthetic store and SQLite conditional-update proof',
-        serverIntegration: {
-            status: 'NOT_RUN',
-            spec: serverSpecPath,
-            prerequisites: [
-                'pre-provisioned portable Node 24.22.1 and Yarn 1.22.22 on PATH in a disposable authorized Linux checkout; version checks only, no shim/global install',
-                'yarn install --frozen-lockfile from the checkout root',
-                'yarn --cwd apps/server build:shared',
-                'yarn --cwd apps/server generate:light (schema:sync + prisma generate --schema prisma/sqlite/schema.prisma)',
-                'yarn --cwd apps/server test:integration sources/app/auth/restrictedDeviceAuthority.integration.spec.ts',
-                'generated SQLite Prisma client and tsx migration deploy tooling',
-            ],
+        upstreamAddedTests: {
+            unit: {
+                path: unitSpecPath,
+                status: 'NOT_RUN',
+            },
+            integration: {
+                path: serverSpecPath,
+                status: 'NOT_RUN',
+                prerequisites: [
+                    'pre-provisioned portable Node 24.22.1 and Yarn 1.22.22 on PATH in a disposable authorized Linux checkout; version checks only, no shim/global install',
+                    'yarn install --frozen-lockfile from the checkout root',
+                    'yarn --cwd apps/server build:shared',
+                    'yarn --cwd apps/server generate:light (schema:sync + prisma generate --schema prisma/sqlite/schema.prisma)',
+                    'yarn --cwd apps/server test:integration sources/app/auth/restrictedDeviceAuthority.integration.spec.ts',
+                    'generated SQLite Prisma client and tsx migration deploy tooling',
+                ],
+            },
         },
         notRun: [
-            'generated SQLite Prisma client and auth integration suite',
+            'upstream Vitest unit restrictedDeviceEnrollment.test.ts',
+            'upstream SQLite Prisma/auth integration restrictedDeviceAuthority.integration.spec.ts',
             'Happier server typecheck/build and DB-contract suite',
             'protected local IPC or launcher binding',
             'in-flight decision and upload fencing',

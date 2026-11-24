@@ -1471,10 +1471,10 @@ index 0000000..d4c1acb
 +});
 diff --git a/apps/server/sources/app/auth/restrictedDeviceEnrollment.ts b/apps/server/sources/app/auth/restrictedDeviceEnrollment.ts
 new file mode 100644
-index 0000000..89cab13
+index 0000000..b3ac51c
 --- /dev/null
 +++ b/apps/server/sources/app/auth/restrictedDeviceEnrollment.ts
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,350 @@
 +import { createHash, randomBytes } from 'node:crypto';
 +
 +import {
@@ -1495,12 +1495,13 @@ index 0000000..89cab13
 + * Owner-local device enrollment and grant lifecycle primitives.
 + *
 + * These functions hold no ambient authority: the caller supplies the authority
-+ * incarnation read from the protected local issuer configuration, and every
-+ * storage effect goes through an injected callback. Production call sites must
-+ * use the bound closure in `restrictedDeviceAuthority.ts`; these primitives take
-+ * an explicit incarnation only for that closure and offline fixtures. The relay
-+ * never reaches them, so loopback, public origin, or phone tokens are not
-+ * admission factors.
++ * incarnation, and every storage effect goes through an injected callback.
++ * Production call sites must use the bound closure in
++ * `restrictedDeviceAuthority.ts`; these primitives take an explicit incarnation
++ * only for that closure and offline fixtures. The protected owner startup
++ * binding and restore-incarnation rotation are separate owner-side requirements
++ * and are not established here. The relay never reaches them, so loopback,
++ * public origin, or phone tokens are not admission factors.
 + */
 +
 +const ENROLLMENT_SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -2089,7 +2090,7 @@ index 0000000..a678557
 +    });
 +}
 diff --git a/apps/server/sources/app/auth/restrictedDeviceGrants.ts b/apps/server/sources/app/auth/restrictedDeviceGrants.ts
-index 815d12e..343d44a 100644
+index 815d12e..fd06740 100644
 --- a/apps/server/sources/app/auth/restrictedDeviceGrants.ts
 +++ b/apps/server/sources/app/auth/restrictedDeviceGrants.ts
 @@ -1,17 +1,9 @@
@@ -2116,7 +2117,7 @@ index 815d12e..343d44a 100644
  
  type DeviceGrantSnapshot = Readonly<{
      id: string;
-@@ -26,7 +18,7 @@ type DeviceGrantSnapshot = Readonly<{
+@@ -26,17 +18,22 @@ type DeviceGrantSnapshot = Readonly<{
  export type RestrictedDeviceContext = Readonly<{
      grantId: string;
      generation: number;
@@ -2124,8 +2125,13 @@ index 815d12e..343d44a 100644
 +    kind: RestrictedDeviceKind;
  }>;
  
- /** The installer supplies the current authority incarnation independently of restored session data. */
-@@ -34,9 +26,10 @@ export function readRestrictedDeviceAuthority(env: NodeJS.ProcessEnv): string |
+-/** The installer supplies the current authority incarnation independently of restored session data. */
++/**
++ * Restricted-mode configuration read only. This environment value is a
++ * placeholder; it is not the protected owner startup binding or pre-listen
++ * restore-incarnation rotation, which remain separate owner-side requirements.
++ */
+ export function readRestrictedDeviceAuthority(env: NodeJS.ProcessEnv): string | null {
      const mode = env.HAPPIER_RAC_RESTRICTED_DEPLOYMENT;
      const incarnation = env.HAPPIER_RAC_AUTH_INCARNATION;
      if (mode === undefined && incarnation === undefined) return null;
@@ -2139,7 +2145,7 @@ index 815d12e..343d44a 100644
  }
  
  /** Accept signed claims only while the matching durable grant is current. */
-@@ -47,12 +40,10 @@ export async function verifyRestrictedDeviceGrant(params: Readonly<{
+@@ -47,12 +44,10 @@ export async function verifyRestrictedDeviceGrant(params: Readonly<{
      nowMs: number;
      lookupGrant: (id: string) => Promise<DeviceGrantSnapshot | null>;
  }>): Promise<RestrictedDeviceContext | null> {
