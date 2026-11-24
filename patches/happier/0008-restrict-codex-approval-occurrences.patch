@@ -1,0 +1,547 @@
+diff --git a/apps/cli/src/agent/permissions/BasePermissionHandler.ts b/apps/cli/src/agent/permissions/BasePermissionHandler.ts
+index fd2518f..9d9178c 100644
+--- a/apps/cli/src/agent/permissions/BasePermissionHandler.ts
++++ b/apps/cli/src/agent/permissions/BasePermissionHandler.ts
+@@ -109,6 +109,7 @@ export abstract class BasePermissionHandler {
+             toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
+             triggerAbortCallbackOnAbortDecision?: boolean;
+             requestScope?: 'foreground' | 'execution_run';
++            allowCachedDecisions?: boolean;
+         }
+     ) {
+         this.session = session;
+@@ -126,6 +127,7 @@ export abstract class BasePermissionHandler {
+         });
+         this.requestCoordinator = createPermissionRequestCoordinator<PermissionResult>({
+             store: this.requestStore,
++            allowCachedDecisions: opts?.allowCachedDecisions !== false,
+         });
+         this.onAbortRequested = typeof opts?.onAbortRequested === 'function' ? opts.onAbortRequested : null;
+         this.triggerAbortCallbackOnAbortDecision = opts?.triggerAbortCallbackOnAbortDecision ?? true;
+diff --git a/apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts b/apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts
+index 0361ae0..5780b17 100644
+--- a/apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts
++++ b/apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts
+@@ -27,6 +27,10 @@ import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
+ import { isTrustedAlwaysAutoApproveToolName } from './alwaysAutoApproveToolName';
+ import { extractShellCommand } from './permissionToolIdentifier';
+ import { resolveAgentRequestKind } from './requestKind';
++import {
++  restrictPermissionResultForExplicitOwner,
++  RestrictedApprovalOccurrenceError,
++} from './approvalDecisionPolicy';
+ import { shouldDenyAgentSessionTitleToolCall } from './codingPromptTitlePermission';
+ import { resolveSessionCodingPromptSettingsFromSession } from '../prompting/coding/resolveSessionCodingPromptSettings';
+ import { parseTrustedHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
+@@ -39,6 +43,7 @@ export { isDefaultWriteLikeToolName };
+ export class CodexLikePermissionHandler extends BasePermissionHandler {
+   private readonly logPrefix: string;
+   private readonly isWriteLikeToolName: (toolName: string) => boolean;
++  private readonly requireExplicitOwnerDecision: boolean;
+   private currentPermissionMode: PermissionMode = 'default';
+   private currentPermissionModeUpdatedAt = 0;
+ 
+@@ -53,6 +58,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
+     toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
+     triggerAbortCallbackOnAbortDecision?: boolean;
+     requestScope?: 'foreground' | 'execution_run';
++    requireExplicitOwnerDecision?: boolean;
+   }) {
+     super(params.session, {
+       pushSender: params.pushSender ?? null,
+@@ -62,9 +68,56 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
+       toolTrace: params.toolTrace ?? null,
+       triggerAbortCallbackOnAbortDecision: params.triggerAbortCallbackOnAbortDecision,
+       requestScope: params.requestScope,
++      allowCachedDecisions: params.requireExplicitOwnerDecision !== true,
+     });
+     this.logPrefix = params.logPrefix;
+     this.isWriteLikeToolName = params.isWriteLikeToolName ?? isDefaultWriteLikeToolName;
++    this.requireExplicitOwnerDecision = params.requireExplicitOwnerDecision === true;
++  }
++
++  protected override isAllowedForSession(toolName: string, input: unknown): boolean {
++    return !this.requireExplicitOwnerDecision && super.isAllowedForSession(toolName, input);
++  }
++
++  private restrictPermissionResult(toolName: string, result: PermissionResult): PermissionResult {
++    return restrictPermissionResultForExplicitOwner({
++      requireExplicitOwnerDecision: this.requireExplicitOwnerDecision,
++      requestKind: resolveAgentRequestKind(toolName),
++      result,
++    });
++  }
++
++  private hasCompletedPermissionRequest(toolCallId: string): boolean {
++    try {
++      return Boolean(this.session.getAgentStateSnapshot?.()?.completedRequests?.[toolCallId]);
++    } catch {
++      // Fail closed if the session snapshot cannot be read.
++      return true;
++    }
++  }
++
++  private async requestPermissionDecisionForRestrictedProfile(
++    toolCallId: string,
++    toolName: string,
++    input: unknown,
++    resolveDecisionIfPolicyChanges?: () => PermissionResult | null,
++  ): Promise<PermissionResult> {
++    try {
++      return await this.requestPermissionDecision(
++        toolCallId,
++        toolName,
++        input,
++        resolveDecisionIfPolicyChanges,
++      );
++    } catch (error) {
++      if (error instanceof RestrictedApprovalOccurrenceError) {
++        logger.debug(
++          `${this.getLogPrefix()} Denying reused permission occurrence ${toolCallId} (${error.reason})`,
++        );
++        return { decision: 'denied' };
++      }
++      throw error;
++    }
+   }
+ 
+   protected getLogPrefix(): string {
+@@ -198,6 +251,9 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
+   }
+ 
+   private shouldAutoApprove(toolName: string, input: unknown, permissionMode: PermissionMode): boolean {
++    // Restricted deployments never auto-approve: every provider occurrence needs an
++    // explicit owner decision, regardless of mode or allowlisted safe tools.
++    if (this.requireExplicitOwnerDecision) return false;
+     if (this.isAlwaysAutoApproveTool(toolName, input)) return true;
+     if (this.isHappierToolsShellBridgeToolCall(toolName, input)) return true;
+ 
+@@ -220,7 +276,8 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
+ 
+   getImmediateDecision(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+     this.syncPermissionModeFromMetadataSnapshotIfNewer();
+-    return this.resolveDecisionForToolCall(toolCallId, toolName, input, this.currentPermissionMode);
++    const decision = this.resolveDecisionForToolCall(toolCallId, toolName, input, this.currentPermissionMode);
++    return decision ? this.restrictPermissionResult(toolName, decision) : null;
+   }
+ 
+   async handleToolCall(
+@@ -237,12 +294,12 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
+       ? () => this.resolveDecisionForToolCall(toolCallId, toolName, input, permissionMode)
+       : undefined;
+     if (this.isPermissionRequestClaimed(toolCallId)) {
+-      return await this.requestPermissionDecision(
++      return this.restrictPermissionResult(toolName, await this.requestPermissionDecisionForRestrictedProfile(
+         toolCallId,
+         toolName,
+         input,
+         resolveAdmittedDecision,
+-      );
++      ));
+     }
+     logger.debug(`${this.getLogPrefix()} handleToolCall`, {
+       toolCallId,
+@@ -257,6 +314,17 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
+       return pending;
+     }
+ 
++    if (
++      this.requireExplicitOwnerDecision &&
++      resolveAgentRequestKind(toolName) === 'permission' &&
++      this.hasCompletedPermissionRequest(toolCallId)
++    ) {
++      // A completed provider request id is a settled owner-facing grant identity.
++      // Do not publish a new prompt and do not touch the completed record.
++      logger.debug(`${this.getLogPrefix()} Denying reused completed permission request ${toolCallId}`);
++      return { decision: 'denied' };
++    }
++
+     if (this.shouldDenySessionTitleToolCall(toolName, input)) {
+       logger.debug(`${this.getLogPrefix()} Denying session title tool ${toolName} (${toolCallId}) because title updates are disabled`);
+       this.recordAutoDecision(toolCallId, toolName, input, 'denied');
+@@ -287,13 +355,13 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
+       return { decision };
+     }
+ 
+-    const pending = this.requestPermissionDecision(
++    const pending = this.requestPermissionDecisionForRestrictedProfile(
+       toolCallId,
+       toolName,
+       input,
+       resolveAdmittedDecision,
+     );
+     logger.debug(`${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId}) in ${permissionMode} mode`);
+-    return pending;
++    return this.restrictPermissionResult(toolName, await pending);
+   }
+ }
+diff --git a/apps/cli/src/agent/permissions/approvalDecisionPolicy.ts b/apps/cli/src/agent/permissions/approvalDecisionPolicy.ts
+new file mode 100644
+index 0000000..abedcf0
+--- /dev/null
++++ b/apps/cli/src/agent/permissions/approvalDecisionPolicy.ts
+@@ -0,0 +1,156 @@
++import type { PermissionResult } from './permissionResult';
++
++/**
++ * Restricted-deployment approval policy.
++ *
++ * Restricted deployments allow an explicit owner approval for the matching
++ * provider occurrence only. Broader-than-once decisions (session approval or an
++ * execution-policy amendment) are unsupported there and are declined instead of
++ * being widened, cached, or silently downconverted into an affirmative answer.
++ *
++ * Approval-shaped `requestUserInput` is a heuristic fallback for providers that
++ * did not use a typed native approval method. The pinned schema has no typed
++ * negative for it, so restricted mode rejects that shape with a fixed bounded
++ * unsupported error instead of guessing provider option labels.
++ *
++ * The helpers are inert unless the caller passes `requireExplicitOwnerDecision`,
++ * so the normal unrestricted path keeps its existing behaviour.
++ */
++
++export type BroaderThanOnceApprovalDecision =
++  | 'approved_for_session'
++  | 'approved_execpolicy_amendment';
++
++export function isBroaderThanOnceApproval(
++  decision: PermissionResult['decision'],
++): decision is BroaderThanOnceApprovalDecision {
++  return decision === 'approved_for_session' || decision === 'approved_execpolicy_amendment';
++}
++
++/** Narrows a broader permission result to a denial for the restricted profile. */
++export function restrictPermissionResultForExplicitOwner(params: Readonly<{
++  requireExplicitOwnerDecision: boolean;
++  requestKind: 'permission' | 'user_action';
++  result: PermissionResult;
++}>): PermissionResult {
++  if (!params.requireExplicitOwnerDecision) return params.result;
++  if (params.requestKind !== 'permission') return params.result;
++  if (!isBroaderThanOnceApproval(params.result.decision)) return params.result;
++  return { decision: 'denied' };
++}
++
++/** Declines a broader approval response; `null` means "use the stock mapping". */
++export function restrictedApprovalDecision(
++  requireExplicitOwnerDecision: boolean,
++  decision: PermissionResult['decision'],
++): Readonly<Record<string, unknown>> | null {
++  if (!requireExplicitOwnerDecision) return null;
++  return isBroaderThanOnceApproval(decision) ? { decision: 'decline' } : null;
++}
++
++/** Declines a native permissions (sandbox escalation) response in the restricted profile. */
++export function restrictedPermissionsDecision(
++  requireExplicitOwnerDecision: boolean,
++): Readonly<Record<string, unknown>> | null {
++  if (!requireExplicitOwnerDecision) return null;
++  return { permissions: {}, scope: 'turn' };
++}
++
++/** Declines a broader MCP elicitation acceptance; `null` means "use the stock mapping". */
++export function restrictedElicitationAction(
++  requireExplicitOwnerDecision: boolean,
++  decision: PermissionResult['decision'],
++): 'decline' | null {
++  if (!requireExplicitOwnerDecision) return null;
++  return isBroaderThanOnceApproval(decision) ? 'decline' : null;
++}
++
++export const RESTRICTED_APPROVAL_SHAPED_USER_INPUT_MESSAGE =
++  'restricted_deployment_requires_typed_approval';
++
++/**
++ * Fixed bounded error for a restricted approval-shaped `requestUserInput`.
++ *
++ * The app-server client converts a thrown handler error into a JSON-RPC error
++ * response (`{ id, error: { code: -32000, message } }`). Provider handling of
++ * that error is unqualified: it may fail the turn. It is not a denial and must
++ * not be treated as one.
++ */
++export function createRestrictedApprovalShapedUserInputError(): Error {
++  const error = new Error(RESTRICTED_APPROVAL_SHAPED_USER_INPUT_MESSAGE);
++  error.name = 'RestrictedApprovalShapedUserInputUnsupportedError';
++  return error;
++}
++
++/**
++ * True only for the restricted approval-shaped `requestUserInput` branch.
++ * Typed native approval methods are handled by their own mappings.
++ */
++export function isRestrictedApprovalShapedUserInput(params: Readonly<{
++  requireExplicitOwnerDecision: boolean;
++  method: string;
++  approvalShaped: boolean;
++}>): boolean {
++  return (
++    params.requireExplicitOwnerDecision === true &&
++    params.method === 'item/tool/requestUserInput' &&
++    params.approvalShaped === true
++  );
++}
++
++export const RESTRICTED_APPROVAL_OCCURRENCE_LIMIT = 4096;
++
++export type RestrictedApprovalOccurrenceRejection = 'settled' | 'full';
++
++/**
++ * Raised when a restricted permission request reuses a provider request id that
++ * this coordinator has already claimed. It is internal to the CLI; the Codex
++ * handler turns it into a typed denial so a stale id cannot become a new grant.
++ */
++export class RestrictedApprovalOccurrenceError extends Error {
++  readonly reason: RestrictedApprovalOccurrenceRejection;
++
++  constructor(reason: RestrictedApprovalOccurrenceRejection) {
++    super(`restricted_approval_occurrence_${reason}`);
++    this.name = 'RestrictedApprovalOccurrenceError';
++    this.reason = reason;
++  }
++}
++
++export type RestrictedSeenOccurrenceClaim = 'fresh' | 'duplicate' | 'full';
++
++export interface RestrictedSeenOccurrenceClaims {
++  claim(requestId: string): RestrictedSeenOccurrenceClaim;
++  has(requestId: string): boolean;
++  readonly size: number;
++}
++
++/**
++ * Bounded, non-evicting seen-id claim set.
++ *
++ * The claim is recorded before the owner prompt. A duplicate never grows the
++ * set. Once the capacity is reached, new ids are denied rather than evicting an
++ * older id (eviction would permit reuse of a settled identity).
++ */
++export function createBoundedSeenOccurrenceClaims(
++  capacity: number,
++): RestrictedSeenOccurrenceClaims {
++  if (!Number.isSafeInteger(capacity) || capacity <= 0) {
++    throw new Error('restricted_approval_occurrence_limit_invalid');
++  }
++  const seen = new Set<string>();
++  return {
++    claim(requestId: string): RestrictedSeenOccurrenceClaim {
++      if (seen.has(requestId)) return 'duplicate';
++      if (seen.size >= capacity) return 'full';
++      seen.add(requestId);
++      return 'fresh';
++    },
++    has(requestId: string): boolean {
++      return seen.has(requestId);
++    },
++    get size(): number {
++      return seen.size;
++    },
++  };
++}
+diff --git a/apps/cli/src/agent/permissions/permissionRequestCoordinator.ts b/apps/cli/src/agent/permissions/permissionRequestCoordinator.ts
+index dbffec1..332ff43 100644
+--- a/apps/cli/src/agent/permissions/permissionRequestCoordinator.ts
++++ b/apps/cli/src/agent/permissions/permissionRequestCoordinator.ts
+@@ -2,6 +2,13 @@ import { deepEqual } from '@/utils/deterministicJson';
+ import { isSameAgentStateRequestOccurrence, type AgentStateOutstandingRequest } from './agentStateRequestStore';
+ import { normalizeAskUserQuestionInputForPublication } from '@/agent/questions/normalizeAskUserQuestionInput';
+ import { logger } from '@/ui/logger';
++import {
++    createBoundedSeenOccurrenceClaims,
++    RESTRICTED_APPROVAL_OCCURRENCE_LIMIT,
++    RestrictedApprovalOccurrenceError,
++    type RestrictedSeenOccurrenceClaims,
++} from './approvalDecisionPolicy';
++import { resolveAgentRequestKind } from './requestKind';
+ 
+ export type PermissionRequestCoordinatorRequest = Readonly<{
+     requestId: string;
+@@ -109,13 +116,19 @@ type CachedPermissionDecision<TResult> = {
+ 
+ export class PermissionRequestCoordinator<TResult> {
+     private readonly store: PermissionRequestCoordinatorStore;
++    private readonly allowCachedDecisions: boolean;
++    private readonly seenOccurrenceClaims: RestrictedSeenOccurrenceClaims | null;
+     private readonly pendingRequests = new Map<string, PendingPermissionRequest<TResult>>();
+     private readonly cachedDecisions = new Map<string, CachedPermissionDecision<TResult>>();
+     private readonly invalidatedDecisionRequestIds = new Set<string>();
+     private waiterSequence = 0;
+ 
+-    constructor(params: Readonly<{ store: PermissionRequestCoordinatorStore }>) {
++    constructor(params: Readonly<{ store: PermissionRequestCoordinatorStore; allowCachedDecisions?: boolean }>) {
+         this.store = params.store;
++        this.allowCachedDecisions = params.allowCachedDecisions !== false;
++        this.seenOccurrenceClaims = this.allowCachedDecisions
++            ? null
++            : createBoundedSeenOccurrenceClaims(RESTRICTED_APPROVAL_OCCURRENCE_LIMIT);
+     }
+ 
+     isRequestClaimed(requestId: string): boolean {
+@@ -148,7 +161,9 @@ export class PermissionRequestCoordinator<TResult> {
+             return this.attachWaiter(entry, options?.signal);
+         }
+ 
+-        const cached = this.cachedDecisions.get(request.requestId);
++        const cached = this.allowCachedDecisions
++            ? this.cachedDecisions.get(request.requestId)
++            : undefined;
+         const invalidatedDecision = this.invalidatedDecisionRequestIds.delete(request.requestId);
+         const cachedCompatible = cached
+             ? isCompatibleCachedDecision(cached, { ...request, toolInput: normalizedToolInput })
+@@ -156,6 +171,17 @@ export class PermissionRequestCoordinator<TResult> {
+         if (cached && cachedCompatible && !invalidatedDecision) {
+             return Promise.resolve(cached.result);
+         }
++        if (this.seenOccurrenceClaims && resolveAgentRequestKind(request.toolName) === 'permission') {
++            // Claim the provider request id before publishing the owner prompt.
++            // A settled or reused id is denied; no replacement, no eviction.
++            const claim = this.seenOccurrenceClaims.claim(request.requestId);
++            if (claim === 'full') {
++                return Promise.reject(new RestrictedApprovalOccurrenceError('full'));
++            }
++            if (claim === 'duplicate') {
++                return Promise.reject(new RestrictedApprovalOccurrenceError('settled'));
++            }
++        }
+         const replaceCompletedRequest = invalidatedDecision || !!cached;
+         if (cached && !cachedCompatible) {
+             this.cachedDecisions.delete(request.requestId);
+@@ -401,12 +427,14 @@ export class PermissionRequestCoordinator<TResult> {
+         const waiters = [...entry.waiters.values()];
+         entry.waiters.clear();
+         this.pendingRequests.delete(entry.requestId);
+-        this.cachedDecisions.set(entry.requestId, {
+-            result,
+-            toolName: entry.toolName,
+-            toolInput: entry.toolInput,
+-            sourceLocalId: entry.sourceLocalId,
+-        });
++        if (this.allowCachedDecisions) {
++            this.cachedDecisions.set(entry.requestId, {
++                result,
++                toolName: entry.toolName,
++                toolInput: entry.toolInput,
++                sourceLocalId: entry.sourceLocalId,
++            });
++        }
+         for (const waiter of waiters) {
+             if (waiter.aborted) continue;
+             detachWaiter(waiter);
+@@ -546,7 +574,7 @@ export class PermissionRequestCoordinator<TResult> {
+ }
+ 
+ export function createPermissionRequestCoordinator<TResult>(
+-    params: Readonly<{ store: PermissionRequestCoordinatorStore }>,
++    params: Readonly<{ store: PermissionRequestCoordinatorStore; allowCachedDecisions?: boolean }>,
+ ): PermissionRequestCoordinator<TResult> {
+     return new PermissionRequestCoordinator<TResult>(params);
+ }
+diff --git a/apps/cli/src/backends/codex/appServer/runtime.ts b/apps/cli/src/backends/codex/appServer/runtime.ts
+index 092a467..5b5761e 100644
+--- a/apps/cli/src/backends/codex/appServer/runtime.ts
++++ b/apps/cli/src/backends/codex/appServer/runtime.ts
+@@ -2,6 +2,14 @@ import { randomUUID } from 'node:crypto';
+ import { canPublishSessionResumeIdentity } from '@/session/metadata/sessionIdentityPublication';
+ import { join } from 'node:path';
+ import type { PermissionResult } from '@/agent/permissions/permissionResult';
++import {
++    createRestrictedApprovalShapedUserInputError,
++    isRestrictedApprovalShapedUserInput,
++    restrictedApprovalDecision,
++    restrictedElicitationAction,
++    restrictedPermissionsDecision,
++} from '@/agent/permissions/approvalDecisionPolicy';
++import { isRestrictedDeploymentConfigured } from '@/security/restrictedDeployment/policy';
+ 
+ import type { ApiSessionClient } from '@/api/session/sessionClient';
+ import { SESSION_CONNECTION_STATE_EVENT } from '@/api/session/connection/sessionConnectionStateEvent';
+@@ -2667,10 +2675,15 @@ export function createCodexAppServerRuntime(params: Readonly<{
+         });
+     };
+ 
++    const requireExplicitOwnerDecision = isRestrictedDeploymentConfigured();
++
+     const mapApprovalDecision = (
+         requestKind: 'command-execution' | 'file-change',
+         result: PermissionResult,
+     ): Readonly<Record<string, unknown>> => {
++        const restricted = restrictedApprovalDecision(requireExplicitOwnerDecision, result.decision);
++        if (restricted) return restricted;
++
+         if (requestKind === 'command-execution' && result.decision === 'approved_execpolicy_amendment') {
+             const amendment = result.execPolicyAmendment?.command;
+             if (Array.isArray(amendment) && amendment.length > 0) {
+@@ -2701,6 +2714,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
+         update: Extract<CodexAppServerStreamUpdate, { type: 'permissions-request' }>,
+         result: PermissionResult,
+     ): Readonly<Record<string, unknown>> => {
++        const restricted = restrictedPermissionsDecision(requireExplicitOwnerDecision);
++        if (restricted) return restricted;
++
+         if (
+             result.decision === 'approved'
+             || result.decision === 'approved_for_session'
+@@ -2723,6 +2739,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
+         result: PermissionResult,
+         options?: Readonly<{ allowDecisionFallback?: boolean }>,
+     ): Readonly<Record<string, unknown>> => {
++        if (requireExplicitOwnerDecision && options?.allowDecisionFallback === true) {
++            // Restricted approval-shaped requestUserInput has no typed negative in
++            // the pinned schema. Never ask with inferred labels or return answers.
++            throw createRestrictedApprovalShapedUserInputError();
++        }
++
+         const answers = buildCodexRequestUserInputAnswers({
+             questions: update.questions,
+             answersByKey: result.answers ?? {},
+@@ -2862,6 +2884,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
+     type CodexAppServerMcpElicitationAction = 'accept' | 'decline' | 'cancel';
+ 
+     const mapMcpElicitationResponse = (result: PermissionResult): Readonly<Record<string, unknown>> => {
++        const restrictedAction = restrictedElicitationAction(requireExplicitOwnerDecision, result.decision);
++        if (restrictedAction) return { action: restrictedAction };
++
+         const action: CodexAppServerMcpElicitationAction = (() => {
+             switch (result.decision) {
+                 case 'approved_for_session':
+@@ -2913,6 +2938,21 @@ export function createCodexAppServerRuntime(params: Readonly<{
+         }>,
+     ): Promise<PreparedProviderResponse> => {
+         const updates = streamEventBridge.onServerRequest({ method, params: requestParams });
++        if (updates.some((update) => {
++            if (update.type !== 'user-input-request') return false;
++            return isRestrictedApprovalShapedUserInput({
++                requireExplicitOwnerDecision,
++                method,
++                approvalShaped: looksLikeCodexApprovalRequestUserInput({
++                    toolName: update.toolName,
++                    questions: update.questions,
++                }),
++            });
++        })) {
++            // Reject before asking the owner or returning any answer map. The
++            // app-server client surfaces this as a bounded JSON-RPC error.
++            throw createRestrictedApprovalShapedUserInputError();
++        }
+         const requestMatchesActiveTurn = options?.allowProviderEffects === false
+             ? false
+             : updates.length > 0
+diff --git a/apps/cli/src/backends/codex/utils/permissionHandler.ts b/apps/cli/src/backends/codex/utils/permissionHandler.ts
+index 156f765..38ebda4 100644
+--- a/apps/cli/src/backends/codex/utils/permissionHandler.ts
++++ b/apps/cli/src/backends/codex/utils/permissionHandler.ts
+@@ -25,6 +25,7 @@ import {
+ import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
+ import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermissionHandler';
+ import type { AccountSettings } from '@happier-dev/protocol';
++import { isRestrictedDeploymentConfigured } from '@/security/restrictedDeployment/policy';
+ 
+ export type { PermissionResult, PendingRequest };
+ 
+@@ -49,6 +50,7 @@ export class CodexPermissionHandler extends CodexLikePermissionHandler {
+       onAbortRequested: opts?.onAbortRequested ?? null,
+       toolTrace: opts?.toolTrace ?? null,
+       triggerAbortCallbackOnAbortDecision: opts?.triggerAbortCallbackOnAbortDecision,
++      requireExplicitOwnerDecision: isRestrictedDeploymentConfigured(),
+     });
+   }
+ }

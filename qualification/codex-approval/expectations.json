@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "suite": "codex-appserver-restricted-approval-offline-qualification",
+  "target": "C07/RAC maintained Codex approval occurrences",
+  "labels": ["offline", "source-bound", "not-integrated", "not-physical"],
+  "scope": "Offline, source-bound qualification of the additive restricted-profile approval hardening for the pinned Happier Codex app-server route. Approval-shaped requestUserInput is rejected with a fixed bounded unsupported error; restricted permission request ids use a bounded, non-evicting seen-occurrence claim; typed native approvals keep once-only semantics. No prompt, model, provider, auth, database, relay, listener or live Happier process is started. Full-runtime, turn-failure behavior and physical installation are NOT_RUN/unqualified.",
+  "happier": {
+    "commit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+    "tree": "911bdc3c673608490b932bd939166d88f198066a",
+    "candidateTree": "c62fcb80464a0b7161efb4c09bdcbd8d9506bea4",
+    "sourceFiles": {
+      "apps/cli/src/backends/codex/runCodex.ts": "de8429f60783ce10513762b1dab7c282b24fde19",
+      "apps/cli/src/backends/codex/utils/permissionHandler.ts": "156f765643018d3b1b17cc97a28951a057d10675",
+      "apps/cli/src/backends/codex/appServer/runtime.ts": "092a467d274fd36c3b76b81633bcf6f5b1376bd0",
+      "apps/cli/src/backends/codex/appServer/codexAppServerHistoryBoundary.ts": "269c33370d352baf1c8d3c1127f19d1ffab79819",
+      "apps/cli/src/backends/codex/appServer/client/createCodexAppServerClient.ts": "e74b4e4920f0f8f16f5de98205dce57084ecd4dc",
+      "apps/cli/src/agent/permissions/BasePermissionHandler.ts": "fd2518f72e25bd2cbbc0a9715766c96ef47279b3",
+      "apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts": "0361ae0d257b93af5b1da29d3194176d91e8b7ad",
+      "apps/cli/src/agent/permissions/permissionRequestCoordinator.ts": "dbffec131198418713cbf78eef83f6d28a0819f9",
+      "apps/cli/src/agent/permissions/permissionResult.ts": "c33aa9066a62df953cae7e9e1988a9c3a83efd6e",
+      "apps/cli/src/agent/permissions/requestKind.ts": "8a188f6bf31f7a859a8f28cc8f2f89ef80089561",
+      "apps/cli/src/security/restrictedDeployment/policy.ts": "3e8430d4b56515c2ce271425a43f8c104e715b3b"
+    }
+  },
+  "patch": {
+    "path": "patches/happier/0008-restrict-codex-approval-occurrences.patch",
+    "sha256": "1280202ed65c8451d6cd0d4c268b3fc03ab85ffa47011fbc7a5dfa230de19e7a",
+    "touchesOnly": [
+      "apps/cli/src/agent/permissions/BasePermissionHandler.ts",
+      "apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts",
+      "apps/cli/src/agent/permissions/approvalDecisionPolicy.ts",
+      "apps/cli/src/agent/permissions/permissionRequestCoordinator.ts",
+      "apps/cli/src/backends/codex/appServer/runtime.ts",
+      "apps/cli/src/backends/codex/utils/permissionHandler.ts"
+    ],
+    "createdFiles": ["apps/cli/src/agent/permissions/approvalDecisionPolicy.ts"],
+    "patchedBlobs": {
+      "apps/cli/src/agent/permissions/BasePermissionHandler.ts": "9d9178cfcb636851c7eb46b98124fb88ae901471",
+      "apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts": "5780b17295f92969bf5edf72ae2350df3e089379",
+      "apps/cli/src/agent/permissions/approvalDecisionPolicy.ts": "abedcf03a787cf350e38663ddfe47a83d6d49f46",
+      "apps/cli/src/agent/permissions/permissionRequestCoordinator.ts": "332ff4377f770e47c82fb3f9e889a42eb76526d9",
+      "apps/cli/src/backends/codex/appServer/runtime.ts": "5b5761e558401b16df7518606aca4e5ed162ba7f",
+      "apps/cli/src/backends/codex/utils/permissionHandler.ts": "38ebda474626bf051d8436b3f73d5a992058821f"
+    }
+  },
+  "route": {
+    "factory": "createCodexPermissionHandler",
+    "handlerClass": "CodexPermissionHandler extends CodexLikePermissionHandler",
+    "runtimeFactory": "createCodexAppServerRuntime",
+    "providerHandlerOption": "permissionHandler",
+    "notProviderEnforced": "ProviderEnforcedPermissionHandler is not imported or instantiated by the Codex handler or runCodex route",
+    "approvalShapedUserInput": "Restricted approval-shaped requestUserInput is rejected in prepareServerRequest before asking or building answers; the app-server client converts the thrown fixed error into a JSON-RPC error response."
+  },
+  "cases": {
+    "approval": [
+      { "id": "unrestricted-session-unchanged", "flag": false, "decision": "approved_for_session", "expectStock": true },
+      { "id": "unrestricted-execpolicy-unchanged", "flag": false, "decision": "approved_execpolicy_amendment", "expectStock": true },
+      { "id": "restricted-once-stock-accept", "flag": true, "decision": "approved", "expectStock": true },
+      { "id": "restricted-session-declined", "flag": true, "decision": "approved_for_session", "expected": { "decision": "decline" } },
+      { "id": "restricted-execpolicy-declined", "flag": true, "decision": "approved_execpolicy_amendment", "expected": { "decision": "decline" } },
+      { "id": "restricted-denied-stock", "flag": true, "decision": "denied", "expectStock": true },
+      { "id": "restricted-abort-stock", "flag": true, "decision": "abort", "expectStock": true }
+    ],
+    "permissions": [
+      { "id": "unrestricted-permissions-unchanged", "flag": false, "expectStock": true },
+      { "id": "restricted-permissions-declined", "flag": true, "expected": { "permissions": {}, "scope": "turn" } }
+    ],
+    "elicitation": [
+      { "id": "unrestricted-session-unchanged", "flag": false, "decision": "approved_for_session", "expectStock": true },
+      { "id": "restricted-session-declined", "flag": true, "decision": "approved_for_session", "expected": "decline" },
+      { "id": "restricted-once-stock", "flag": true, "decision": "approved", "expectStock": true },
+      { "id": "restricted-denied-stock", "flag": true, "decision": "denied", "expectStock": true }
+    ],
+    "handler": [
+      { "id": "unrestricted-session-unchanged", "flag": false, "requestKind": "permission", "decision": "approved_for_session", "expected": "approved_for_session" },
+      { "id": "restricted-session-denied", "flag": true, "requestKind": "permission", "decision": "approved_for_session", "expected": "denied" },
+      { "id": "restricted-execpolicy-denied", "flag": true, "requestKind": "permission", "decision": "approved_execpolicy_amendment", "expected": "denied" },
+      { "id": "restricted-user-action-unchanged", "flag": true, "requestKind": "user_action", "decision": "approved_for_session", "expected": "approved_for_session" },
+      { "id": "restricted-once-unchanged", "flag": true, "requestKind": "permission", "decision": "approved", "expected": "approved" },
+      { "id": "restricted-denied-unchanged", "flag": true, "requestKind": "permission", "decision": "denied", "expected": "denied" }
+    ],
+    "fixedMapping": [
+      { "id": "restricted-approval-shaped-rejected", "flag": true, "method": "item/tool/requestUserInput", "approvalShaped": true, "expected": true },
+      { "id": "restricted-ordinary-input-allowed", "flag": true, "method": "item/tool/requestUserInput", "approvalShaped": false, "expected": false },
+      { "id": "unrestricted-approval-shaped-allowed", "flag": false, "method": "item/tool/requestUserInput", "approvalShaped": true, "expected": false },
+      { "id": "typed-command-approval-not-user-input", "flag": true, "method": "item/commandExecution/requestApproval", "approvalShaped": true, "expected": false },
+      { "id": "typed-file-approval-not-user-input", "flag": true, "method": "item/fileChange/requestApproval", "approvalShaped": true, "expected": false }
+    ],
+    "fixedError": [
+      { "id": "fixed-message", "expectedMessage": "restricted_deployment_requires_typed_approval" },
+      { "id": "fixed-name", "expectedName": "RestrictedApprovalShapedUserInputUnsupportedError" }
+    ],
+    "claims": [
+      {
+        "id": "capacity-two-no-eviction",
+        "capacity": 2,
+        "sequence": ["a", "b", "a", "c", "c"],
+        "expectedClaims": ["fresh", "fresh", "duplicate", "full", "full"],
+        "expectedSize": 2,
+        "expectedHas": { "a": true, "b": true, "c": false }
+      },
+      {
+        "id": "capacity-one-no-eviction",
+        "capacity": 1,
+        "sequence": ["a", "a", "b"],
+        "expectedClaims": ["fresh", "duplicate", "full"],
+        "expectedSize": 1,
+        "expectedHas": { "a": true, "b": false }
+      },
+      {
+        "id": "duplicate-after-settled-no-eviction",
+        "capacity": 2,
+        "sequence": ["settled", "settled"],
+        "expectedClaims": ["fresh", "duplicate"],
+        "expectedSize": 1,
+        "expectedHas": { "settled": true }
+      }
+    ],
+    "invalidClaimCapacity": [0, -1, 1.5],
+    "claimErrors": [
+      { "id": "settled", "reason": "settled", "expectedMessage": "restricted_approval_occurrence_settled" },
+      { "id": "full", "reason": "full", "expectedMessage": "restricted_approval_occurrence_full" }
+    ]
+  },
+  "limits": {
+    "gitTimeoutMs": 120000,
+    "maxSourceBytes": 33554432
+  }
+}
