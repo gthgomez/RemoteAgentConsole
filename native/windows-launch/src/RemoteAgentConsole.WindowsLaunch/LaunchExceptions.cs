@@ -128,8 +128,10 @@ public sealed class LaunchFailureException : Exception
     public LaunchCleanup? Cleanup { get; }
 
     /// <summary>
-    /// True when the creation-time job-assignment API is unavailable or rejected the
-    /// attribute. Nothing was launched and no unsandboxed fallback was attempted.
+    /// True when the host or requested mode is intentionally unsupported (for example the
+    /// creation-time job-assignment API is unavailable, or the 64-bit-only cancelable stdio
+    /// mode was requested on a 32-bit process). Nothing was launched and no fallback was
+    /// attempted.
     /// </summary>
     public bool Unsupported { get; }
 

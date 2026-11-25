@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -34,23 +35,33 @@ public sealed class OwnedProcess : IDisposable
         SafeJobHandle job,
         int processId,
         TimeSpan settlementTimeout,
-        ChildStandardStreams? standardStreams)
+        ChildStandardStreams? standardStreams,
+        CancelableChildStdio? cancelableStreams = null)
     {
         _process = process;
         _job = job;
         ProcessId = processId;
         _settlementTimeout = settlementTimeout;
         StandardStreams = standardStreams;
+        CancelableStreams = cancelableStreams;
     }
 
     /// <summary>The reported process ID. Evidence only; never used to signal or look up the process.</summary>
     public int ProcessId { get; }
 
     /// <summary>
-    /// Parent-side stdin/stdout/stderr custody when pipes were opted in; null for the
-    /// default no-stdio launch. Output and error are distinct streams.
+    /// Parent-side stdin/stdout/stderr custody when <see cref="ChildStdioMode.Pipes"/> was
+    /// opted in; null otherwise. Output and error are distinct streams.
     /// </summary>
     public ChildStandardStreams? StandardStreams { get; }
+
+    /// <summary>
+    /// Overlapped, cancelable parent-side stdin/stdout/stderr custody when
+    /// <see cref="ChildStdioMode.CancelablePipes"/> was opted in; null otherwise. Call
+    /// <see cref="CancelableChildStdio.CloseInput"/> to deliver EOF and
+    /// <see cref="CancelableChildStdio.Shutdown"/> for a finite, idempotent teardown.
+    /// </summary>
+    public CancelableChildStdio? CancelableStreams { get; }
 
     /// <summary>True when the exact root handle has signalled exit.</summary>
     public bool HasExited
@@ -175,6 +186,12 @@ public sealed class OwnedProcess : IDisposable
     /// graceful pipe shutdown close <see cref="ChildStandardStreams.StandardInput"/>
     /// first, wait for exit/settlement, then dispose the owner and streams.
     /// </summary>
+    /// <remarks>
+    /// Stream cleanup is attempted unconditionally before the exact job and process handles
+    /// are closed. Cancelable stream disposal may return with a deferred pump still owning
+    /// a handle and the owner lease; this method does not attest channel, root or job
+    /// settlement, and a cleanup exception is not evidence of exit.
+    /// </remarks>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -182,9 +199,11 @@ public sealed class OwnedProcess : IDisposable
             return;
         }
 
-        _job.Dispose();
-        _process.Dispose();
-        StandardStreams?.Dispose();
+        // Forced cleanup order: cancel/stop parent-side I/O first, then close the job
+        // (kill-on-close) and the exact process handle. Every step is attempted even when
+        // an earlier stream cleanup throws; cancelable streams retain any operation that
+        // cannot be cancelled safely rather than freeing in-use memory.
+        ResourceCleanup.DisposeAll(CancelableStreams, StandardStreams, _job, _process);
     }
 
     internal static TimeSpan NormalizeTimeout(TimeSpan? timeout, string parameterName, TimeSpan defaultTimeout)
@@ -263,5 +282,34 @@ public sealed class OwnedProcess : IDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+    }
+}
+
+/// <summary>
+/// Attempts every cleanup step even if an earlier one throws. The first failure is
+/// rethrown after all steps have run; an exception is never treated as evidence that a
+/// process, channel or job settled.
+/// </summary>
+internal static class ResourceCleanup
+{
+    internal static void DisposeAll(params IDisposable?[] resources)
+    {
+        Exception? first = null;
+        foreach (var resource in resources)
+        {
+            try
+            {
+                resource?.Dispose();
+            }
+            catch (Exception error)
+            {
+                first ??= error;
+            }
+        }
+
+        if (first is not null)
+        {
+            ExceptionDispatchInfo.Capture(first).Throw();
+        }
     }
 }

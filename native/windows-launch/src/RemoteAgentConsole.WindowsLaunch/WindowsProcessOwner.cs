@@ -37,7 +37,12 @@ public static class WindowsProcessOwner
     /// </summary>
     /// <param name="contract">The owner-qualified executable/argv/environment contract.</param>
     /// <param name="settlementTimeout">Default bound used by later stop/settle calls.</param>
-    /// <param name="stdio">Optional explicit stdin/stdout/stderr pipe custody; default is no stdio.</param>
+    /// <param name="stdio">
+    /// Optional explicit stdin/stdout/stderr custody. <see cref="ChildStdioMode.None"/> is the
+    /// default; <see cref="ChildStdioMode.Pipes"/> keeps the existing synchronous pipe
+    /// behavior; <see cref="ChildStdioMode.CancelablePipes"/> adds overlapped, cancelable
+    /// parent-side channels over private local named pipes.
+    /// </param>
     /// <returns>The resumed, contained owner.</returns>
     /// <exception cref="LaunchContractException">The contract was rejected before any native call.</exception>
     /// <exception cref="LaunchFailureException">A stage failed; see <see cref="LaunchFailureException.Cleanup"/> and <see cref="LaunchFailureException.Unsupported"/>.</exception>
@@ -47,7 +52,7 @@ public static class WindowsProcessOwner
         ChildStdioMode stdio = ChildStdioMode.None)
     {
         ArgumentNullException.ThrowIfNull(contract);
-        if (stdio is not (ChildStdioMode.None or ChildStdioMode.Pipes))
+        if (stdio is not (ChildStdioMode.None or ChildStdioMode.Pipes or ChildStdioMode.CancelablePipes))
         {
             throw new ArgumentOutOfRangeException(nameof(stdio), stdio, "Unsupported child stdio mode.");
         }
@@ -61,8 +66,11 @@ public static class WindowsProcessOwner
         SafeProcessHandle? process = null;
         SafeThreadHandle? thread = null;
         StdioPipes? pipes = null;
+        CancelableStdioPipes? cancelablePipes = null;
         ChildStandardStreams? streams = null;
-        var inheritanceWindow = stdio == ChildStdioMode.Pipes ? StdioPipes.InheritanceWindow : null;
+        CancelableChildStdio? cancelableStreams = null;
+        var standardHandles = stdio is ChildStdioMode.Pipes or ChildStdioMode.CancelablePipes;
+        var inheritanceWindow = standardHandles ? StdioPipes.InheritanceWindow : null;
         if (inheritanceWindow is not null)
         {
             Monitor.Enter(inheritanceWindow);
@@ -76,8 +84,13 @@ public static class WindowsProcessOwner
                 pipes = StdioPipes.Create();
                 streams = pipes.CreateParentStreams();
             }
+            else if (stdio == ChildStdioMode.CancelablePipes)
+            {
+                cancelablePipes = CancelableStdioPipes.Create();
+            }
 
-            using var attributes = JobListAttributes.Create(job, pipes?.ChildHandles);
+            var childHandles = pipes?.ChildHandles ?? cancelablePipes?.ChildHandles;
+            using var attributes = JobListAttributes.Create(job, childHandles);
 
             var startup = new NativeMethods.StartupInfoEx
             {
@@ -88,12 +101,12 @@ public static class WindowsProcessOwner
                 AttributeList = attributes.Pointer,
             };
 
-            if (pipes is not null)
+            if (childHandles is not null)
             {
                 startup.StartupInfo.Flags |= NativeMethods.StartfUseStdHandles;
-                startup.StartupInfo.StandardInput = pipes.ChildHandles[0];
-                startup.StartupInfo.StandardOutput = pipes.ChildHandles[1];
-                startup.StartupInfo.StandardError = pipes.ChildHandles[2];
+                startup.StartupInfo.StandardInput = childHandles[0];
+                startup.StartupInfo.StandardOutput = childHandles[1];
+                startup.StartupInfo.StandardError = childHandles[2];
             }
 
             var commandLine = IntPtr.Zero;
@@ -108,7 +121,7 @@ public static class WindowsProcessOwner
                     commandLine,
                     IntPtr.Zero,
                     IntPtr.Zero,
-                    inheritHandles: pipes is not null,
+                    inheritHandles: childHandles is not null,
                     NativeMethods.CreateSuspended
                         | NativeMethods.CreateUnicodeEnvironment
                         | NativeMethods.CreateDetachedProcess
@@ -127,6 +140,7 @@ public static class WindowsProcessOwner
                 }
 
                 pipes?.CloseChildEnds();
+                cancelablePipes?.CloseChildEnds();
                 process = new SafeProcessHandle(information.Process);
                 thread = new SafeThreadHandle(information.Thread);
 
@@ -151,6 +165,27 @@ public static class WindowsProcessOwner
                         process,
                         thread,
                         job);
+                }
+
+                // Prepare and verify stream custody while the root is still suspended. A
+                // pump setup failure rolls back the suspended root before any child code
+                // can run and never disposes a handle the pump may still own.
+                if (cancelablePipes is not null)
+                {
+                    try
+                    {
+                        cancelableStreams = cancelablePipes.CreateStreams();
+                    }
+                    catch (Exception error)
+                    {
+                        throw Rollback(
+                            LaunchStage.CreateStdio,
+                            0,
+                            $"Cancelable stdio custody failed before the child was resumed: {error.GetType().Name}: {error.Message}",
+                            process,
+                            thread,
+                            job);
+                    }
                 }
 
                 var injectedSuspendCount = LaunchDiagnostics.ResumeThreadResult;
@@ -225,10 +260,19 @@ public static class WindowsProcessOwner
                 thread.Dispose();
                 thread = null;
 
-                var owned = new OwnedProcess(process, job, unchecked((int)information.ProcessId), bounded, streams);
+                var owned = new OwnedProcess(
+                    process,
+                    job,
+                    unchecked((int)information.ProcessId),
+                    bounded,
+                    streams,
+                    cancelableStreams);
                 pipes?.Dispose();
                 pipes = null;
+                cancelablePipes?.Dispose();
+                cancelablePipes = null;
                 streams = null;
+                cancelableStreams = null;
                 process = null;
                 job = null;
                 return owned;
@@ -248,14 +292,24 @@ public static class WindowsProcessOwner
         }
         finally
         {
-            streams?.Dispose();
-            pipes?.Dispose();
-            thread?.Dispose();
-            process?.Dispose();
-            job?.Dispose();
-            if (inheritanceWindow is not null)
+            try
             {
-                Monitor.Exit(inheritanceWindow);
+                // Every custody step is attempted even if an earlier stream cleanup throws.
+                ResourceCleanup.DisposeAll(
+                    cancelableStreams,
+                    cancelablePipes,
+                    streams,
+                    pipes,
+                    thread,
+                    process,
+                    job);
+            }
+            finally
+            {
+                if (inheritanceWindow is not null)
+                {
+                    Monitor.Exit(inheritanceWindow);
+                }
             }
         }
     }
@@ -358,6 +412,31 @@ internal static class LaunchDiagnostics
 
     /// <summary>Simulates an explicit stdio handle-list failure before CreateProcess.</summary>
     internal static int? CreateHandleListFailure { get; set; }
+
+    /// <summary>
+    /// Simulates a cancel-boundary failure for the cancelable stdio channels. The real
+    /// <c>CancelIoEx</c> call is skipped, so an operation that does not complete naturally
+    /// is classified <c>UnknownPending</c> and retained. Injected values are never treated
+    /// as evidence that cancellation was observed.
+    /// </summary>
+    internal static int? CancelIoExFailure { get; set; }
+
+    /// <summary>
+    /// Deterministic qualification seam: when set, a read pump signals it and waits for
+    /// <see cref="ReadPumpResume"/> after a possible native submit. This is a test delay,
+    /// not a fault injection and not evidence of a real cancellation failure.
+    /// </summary>
+    internal static ManualResetEventSlim? ReadPumpPaused { get; set; }
+
+    /// <summary>Release counterpart for <see cref="ReadPumpPaused"/>.</summary>
+    internal static ManualResetEventSlim? ReadPumpResume { get; set; }
+
+    /// <summary>
+    /// Deterministic qualification seam: injects a failure starting the second read pump
+    /// after the first pump owns a submitted read. The child is never resumed. This is a
+    /// startup-fault test seam, not an OS observation.
+    /// </summary>
+    internal static bool FailSecondReadPumpStart { get; set; }
 
     /// <summary>
     /// Simulates an unsafe previous suspension count. The real ResumeThread call is not

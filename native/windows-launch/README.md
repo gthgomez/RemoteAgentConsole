@@ -44,22 +44,125 @@ qualification suite's `creation-time-assignment-failure` case injects that failu
 the attribute boundary; it does **not** prove that a real host rejects the OS attribute,
 which remains an OS-dependent path the lead must run on the target host.
 
-Optional pipe custody is a typed library API: `ChildStdioMode.Pipes` creates one
-stdin, stdout and stderr pipe set. Child ends are inheritable only for the bounded create
-window, parent ends are never inheritable, and stdout/stderr remain distinct. Pipe-enabled
-launches serialize inside the owner process; the component must run in a dedicated owner
-launcher, and unrelated inherit-all spawns must not run concurrently. There is no
-inherit-all fallback.
+Optional stdio custody is a typed library API: `ChildStdioMode.Pipes` creates one
+anonymous stdin/stdout/stderr pipe set, and `ChildStdioMode.CancelablePipes` creates one
+private named-pipe set with overlapped parent ends. In both modes the child ends are
+inheritable only for the bounded create window, parent ends are never inheritable, and
+stdout/stderr remain distinct. Stdio-enabled launches serialize inside the owner process;
+the component must run in a dedicated owner launcher, and unrelated inherit-all spawns
+must not run concurrently. There is no inherit-all fallback.
 
 Graceful pipe shutdown is: close/dispose the parent `StandardInput` to deliver EOF, wait
 for the child to exit and the job to settle, then dispose `OwnedProcess` (and its
 streams). Calling `OwnedProcess.Dispose` alone is forced cleanup: it closes the job and
 applies kill-on-close rather than requesting a graceful shutdown.
 
+### Cancelable overlapped stdio (opt-in)
+
+`ChildStdioMode.CancelablePipes` adds a second, opt-in custody mode. `None` and `Pipes`
+keep their existing behavior; nothing about the default launch changes.
+
+Mechanism:
+
+- Three private local **named-pipe pairs**. The parent end is opened with
+  `FILE_FLAG_OVERLAPPED`; the child end is a normal **synchronous**, inheritable client
+  handle passed through the same explicit `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. The child
+  performs ordinary blocking pipe I/O. The mode is qualified for **64-bit Windows only**
+  and fails closed before creation otherwise.
+- Endpoint custody: a fresh unpredictable GUID name, `FILE_FLAG_FIRST_PIPE_INSTANCE`, a
+  protected DACL that grants only the current process user (`D:P(A;;GA;;;<sid>)`), exactly
+  one instance, `PIPE_REJECT_REMOTE_CLIENTS`, and the parent opens the **only** client
+  handle itself before the child exists. Before handoff the controlled process verifies
+  `GetNamedPipeInfo` server/client end roles on both handles and requires
+  `GetNamedPipeClientProcessId` and `GetNamedPipeServerProcessId` to report the current
+  process from both the server and client handle views; a GUID, DACL or role string alone
+  is not accepted as peer proof. No other local
+  or remote client can attach, and there is no reconnectable public endpoint. Any failure
+  closes everything and fails the launch; there is no anonymous-pipe or inherit-all
+  fallback.
+- Because the only client is already open, `ConnectNamedPipe` observes
+  `ERROR_PIPE_CONNECTED` without submitting I/O. If the OS still reports a pending
+  connect, the exact operation is cancelled, harvested, or retained (never freed) and the
+  launch fails closed. The sentinel probe makes an unrelated file handle inheritable and
+  resolves the child's handle path (`GetFinalPathNameByHandleW`), so an inherited sentinel
+  is detected by object identity rather than a colliding numeric handle; DACL and
+  remote-client rejection are construction properties, not runtime observations.
+- Each direction has **at most one bounded operation in flight** plus a 4 KiB pipe
+  buffer. A second send reports `Backpressure` and is not queued. Every write has a stable
+  operation identity, one authoritative observer and one stored completion result; a
+  concurrent observer is refused before any wait or effect.
+- Completion is observed natively with `GetOverlappedResult` on the exact `OVERLAPPED`;
+  cancellation calls `CancelIoEx` with that same pointer and the completion event remains
+  authoritative. A cancel that races a completion is harvested with its real byte count;
+  a zero-byte successful pipe read is EOF, never a `Completed/0` result, and data read
+  before a stop is retained as already-read data.
+- Stop is a **gate before effect**: the stop flag, the read submit and the write submit
+  share their channel gates, so no later send or read issues a native operation. The
+  receipt's `StopGateClosed` is gate state only; the fixture separately asserts rejection
+  and no new native submission.
+- A caller timeout never cancels, closes or frees a running operation. A cancel that does
+  not settle within the bound is classified `UnknownPending`, and its unmanaged buffer,
+  `OVERLAPPED` and event are retained for process lifetime rather than freed while the
+  kernel may still write into them.
+- Every submitted operation is freed only after a **positively observed** completion.
+  `PendingOverlappedIo` records submission and completion separately; handle closure,
+  `ERROR_IO_INCOMPLETE`, `ERROR_INVALID_HANDLE` and an unobserved cancellation all retain
+  the allocation. Closing a handle is never used as proof of completion.
+- Cancelable stdio is a **single-owner process mode**. One lease is acquired atomically
+  before any pipe exists; a retained operation keeps that lease until process recycle, so
+  a second owner cannot multiply the retained set. The owner has at most three channel
+  operations; `MaximumRetained = 8` is a defensive process bound, not a claim of a hard
+  per-launch cap. `InheritanceWindow` still serializes only the create window; the owner
+  lease is what excludes active owners.
+- Delivery is tri-state. A cancelled, faulted or still-pending write reports
+  `StdioDelivery.Unknown` because partial delivery cannot be ruled out; only an observed
+  positive byte count reports `Delivered`, and only a pre-submission refusal or a
+  zero-byte successful request reports `None`.
+
+Typed evidence: `StdioSendResult`, `StdioReadResult`, `StdioEofResult`,
+`StdioShutdownReceipt` and `StdioStreamCounters` distinguish native read/write completion,
+end-of-stream/broken pipe, cancellation, caller timeout, backpressure, rejection, fault
+and unknown/in-flight. They never infer a provider or agent turn outcome.
+
+`CancelableChildStdio.CloseInput` is idempotent: it stops new sends, settles or cancels the
+in-flight write, then closes the parent write handle to deliver EOF.
+`CancelableChildStdio.Shutdown` is idempotent and concurrency-safe: it signals both read
+stops first (so pending reads are cancelled promptly and independently of input
+settlement), then executes a finite teardown and shares one receipt with concurrent
+callers. A shutdown whose budget expires before an operation settles returns
+`Complete = false` with `UnknownPending` rather than fabricating settlement.
+`StdioEofResult`/`StdioShutdownReceipt` report both the pending write and the **last
+observed write** status/error/delivery, so a concurrent observer that harvested a
+cancelled or partial write before `CloseInput` cannot turn its history into
+`NotInFlight`/`None`. The pending fields describe the operation in flight when close
+began; the last-write fields describe previously observed history. Neither attests
+delivery beyond the explicit `StdioDelivery` value.
+
+Public calls are admitted at entry; a call after disposal starts is refused before any
+effect. `Dispose` signals channel stop without disposing shared wait handles, then waits a
+bounded interval for admitted callers. Channels and facade events are disposed only after
+the admitted count reaches zero, by exactly one finalizer (disposal or the last exiting
+caller); no signaler can race event closure. The channel's read `Dispose` never closes the
+handle while the pump is alive; the pump owns the handle and closes it on exit after
+harvesting or retaining the pending operation. A gated qualification seam pauses a read
+pump after a possible submit so this teardown window is exercised deterministically (it is
+a test delay, not a simulated cancellation failure). `Dispose` is forced cleanup and
+retains anything it cannot settle safely; a forced-close receipt never claims EOF or
+settlement. It may return while a deferred pump still owns a handle and the owner lease,
+and it attests no channel, root or job settlement. Cleanup steps are attempted
+unconditionally so an earlier stream failure cannot skip exact job/process closure or the
+inheritance-window release; a cleanup exception is never treated as evidence of exit.
+
 `OwnedProcess.KillAndSettle` terminates the exact root handle, terminates the job,
 and waits within a bound for job accounting to reach zero. `Dispose` closes the job, so
 kill-on-close terminates anything still owned. No code path looks up a process by ID or
 image name, enumerates processes, or signals a process outside the job.
+
+`OwnedProcess.Dispose` and the launcher's custody `finally` attempt every cleanup step
+even when an earlier stream cleanup throws: exact job/process handle closure and the
+inheritance-window release are not skipped. A cleanup exception is never treated as
+evidence of exit, and cancelable `Dispose` may still return with a deferred pump handle
+and the owner lease held.
 
 ## Contract boundaries
 
@@ -68,7 +171,7 @@ image name, enumerates processes, or signals a process outside the job.
 | Executable | owner-qualified absolute `.exe` only |
 | Arguments | owner-qualified fixed argv only |
 | Environment | required explicit frozen block; no ambient read, merge or expansion |
-| Stdio | optional typed stdin/stdout/stderr pipes; default none; explicit `HANDLE_LIST`, non-inheritable parent ends, distinct stderr; library-only with no host/Codex binding |
+| Stdio | optional typed stdin/stdout/stderr custody; default none; `Pipes` keeps synchronous anonymous pipes; opt-in `CancelablePipes` adds overlapped parent ends over private local named pipes with explicit `HANDLE_LIST`, non-inheritable parent ends, distinct stderr; library-only with no host/Codex binding |
 | Console | no console/window is allocated for the root |
 | Containment | creation-time private job, kill-on-close, no breakaway |
 | Resume | observed previous suspension count must be exactly 1; observed 0 is unknown/externally runnable, injected values are simulated |
@@ -174,6 +277,21 @@ Scratch output is created under the caller-supplied scratch root, for example
   only false-fail on a handle-value collision, never false-pass an inherited sentinel.
   The default no-stdio launch exposes no streams. An injected explicit handle-list
   failure fails closed before any child code runs;
+- **cancelable overlapped stdio** (opt-in `CancelablePipes`): a PING/PONG exchange, a
+  distinct stderr line, graceful EOF, an absent unrelated inheritable sentinel, a
+  verified exact peer/role pair, and exact job settlement; native stdout **and** stderr
+  reads observed as pending (`TimedOut`, operation retained) while the child is still
+  alive; a dedicated cancellation case where both exact pending reads return
+  `ERROR_OPERATION_ABORTED` (`Canceled`, 995) before the silent child exits, with no new
+  post-stop native submission; a real stdin write larger than the pipe buffer observed as
+  `Submitted` against a non-reading child, a second send refused as `Backpressure`, then
+  the pending write cancelled (`Canceled`, `StdioDelivery.Unknown`) while the child is still
+  alive; broken pipe after child exit; concurrent/idempotent `Shutdown` returning one
+  complete receipt; repeated send/stop/reap/dispose race witnesses; admitted read and
+  `Shutdown` versus `Dispose` lifecycle witnesses; a deterministic gated read-pump
+  teardown witness; and an injected cancel-boundary failure classified `UnknownPending`
+  with the buffer retained and no fabricated settlement (the gated pause and injected
+  cancel are labelled as test seams, not evidence of a real cancellation failure);
 - no start: missing executable and missing working directory produce staged failures
   with no process created;
 - unrelated same-image peer: outside the job, not a member, heartbeat continues
@@ -188,10 +306,50 @@ Scratch output is created under the caller-supplied scratch root, for example
   Windows 10.0.26200 x64; if the OS rejects or lacks the attribute API, launch fails
   before process creation and no fallback is attempted. A real host rejection of the
   attribute API is **not** exercised; only the injected boundary failure is.
-- Pipe custody is synchronous and library-only; it is not wired to the host, maintained
-  Codex app-server, daemon, relay or any remote command surface. ACL hardening,
-  reparse-point checks, code signing, upgrade/rollback and host/Codex binding remain
-  later slices, so this slice still has no production agent launch path.
+- `Pipes` custody is synchronous and library-only; `CancelablePipes` adds overlapped,
+  cancelable parent channels over private local named pipes, but both remain library-only.
+  Neither is wired to the host, maintained Codex app-server, daemon, relay or any remote
+  command surface. Reparse-point checks, code signing, upgrade/rollback and host/Codex
+  binding remain later slices, so this slice still has no production agent launch path.
+- `CancelablePipes` is qualified for 64-bit Windows only and refuses the mode before any
+  process creation on a 32-bit host, with `Unsupported = true`. `PendingOverlappedIo`
+  still zeroes the exact runtime structure size in 4-byte units, so no 20-byte x86 layout
+  is overrun by the shared code.
+- `CancelablePipes` observes native Windows I/O completion and settlement; it does not
+  infer or report a provider/agent turn outcome. The unknown/in-flight classification is
+  exercised only through an injected cancel-boundary failure; a real `CancelIoEx` failure
+  is not staged. A real timeout, a real pending read/write, real read cancellation with
+  `ERROR_OPERATION_ABORTED`, and a real broken pipe are exercised without injection.
+- The named-pipe DACL is an explicit protected ACE for the current process user, and the
+  parent owns the sole client handle. Every launch verifies the exact end roles and
+  current process IDs, but a deliberately mismatched-peer rejection is not staged, and
+  DACL/remote-client exclusion is a construction property rather than a runtime
+  observation. Cross-user attacks and a compromised same-user process remain out of scope.
+- Delivery is tri-state. `StdioDelivery.Unknown` for a cancelled/faulted/in-flight write
+  is honest uncertainty, not evidence that data arrived; `Delivered` requires an observed
+  positive byte count. A read that completed with data during a stop keeps those bytes
+  available to a drain call and reports the stop as the terminal state; a zero-byte
+  successful pipe read is reported as EOF.
+- Cancelable shutdown is finite and idempotent, but a caller budget that expires before a
+  cancel settles returns `Complete = false` and retains the operation. Repeated
+  `Shutdown` calls after that return the same incomplete classification. A forced
+  `Dispose` closes the write handle only after the operation is harvested or retained by
+  the stateful `PendingOverlappedIo`; it never claims EOF or settled state for an
+  unobserved forced closure.
+- The enforceable retained invariant is **one active cancelable owner per process**, with
+  at most three channel operations from that owner. `MaximumRetained = 8` is a defensive
+  process bound; `Retain` never refuses a live buffer. A retained operation keeps the
+  owner lease, so new cancelable launches are refused until the process is recycled.
+- A read-channel `Dispose` does not close the pipe if the pump has not exited within its
+  forced join bound. The pump remains the handle owner, finishes the pending operation,
+  closes the handle on exit and disposes the shared events; a timed-out joiner returns
+  without touching them. The gated teardown fixture exercises this window with an explicit
+  pause seam; the pause is not evidence of a real cancellation failure.
+- A late admitted `CloseInput` after forced write closure has a static defensive branch
+  returning a typed forced-close classification (`UnknownPending`,
+  `ERROR_INVALID_HANDLE`, `Unknown` delivery) from cached state, without `CancelIoEx` or a
+  disposed handle. The fixture does not execute that branch; it is not evidence that a
+  forced close settled anything.
 - Graceful shutdown is stdin EOF, bounded wait/settlement, then dispose. `Dispose` alone
   is forced cleanup via job close/kill-on-close, not a graceful request.
 - The source scan is token-presence only, not AST or semantic proof. The stdio sentinel

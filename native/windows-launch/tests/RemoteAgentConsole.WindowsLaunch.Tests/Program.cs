@@ -11,7 +11,12 @@ using System.Threading;
 
 namespace RemoteAgentConsole.WindowsLaunch.Tests;
 
-internal sealed record TestReceipt(string Name, string Status, double DurationMs, IReadOnlyList<string> Failures);
+internal sealed record TestReceipt(
+    string Name,
+    string Status,
+    double DurationMs,
+    IReadOnlyList<string> Failures,
+    IReadOnlyDictionary<string, string> Evidence);
 
 /// <summary>
 /// Conformance runner for the Windows launch-ownership slice. It compiles no fixture
@@ -105,7 +110,8 @@ internal static class TestRunner
                     "peer-start",
                     "FAIL",
                     0,
-                    new[] { $"{error.GetType().Name}: {error.Message}" }));
+                    new[] { $"{error.GetType().Name}: {error.Message}" },
+                    new Dictionary<string, string>()));
                 Console.WriteLine("FAIL peer-start");
             }
 
@@ -113,7 +119,12 @@ internal static class TestRunner
             {
                 foreach (var name in new[] { "normal-stop", "root-crash", "dispose-kill-on-close", "supervisor-death" })
                 {
-                    results.Add(new TestReceipt(name, "FAIL", 0, new[] { "The unrelated same-image peer did not start." }));
+                    results.Add(new TestReceipt(
+                        name,
+                        "FAIL",
+                        0,
+                        new[] { "The unrelated same-image peer did not start." },
+                        new Dictionary<string, string>()));
                 }
             }
             else
@@ -132,12 +143,27 @@ internal static class TestRunner
             Run(results, "environment-policy", checks => WindowsLaunchScenarios.EnvironmentPolicyCheck(context, checks));
             Run(results, "stdio-pipes", checks => WindowsLaunchScenarios.StdioPipesCheck(context, checks));
             Run(results, "stdio-handle-list-failure", checks => WindowsLaunchScenarios.StdioHandleListFailure(context, checks));
+            Run(results, "cancelable-stdio-exchange", checks => WindowsLaunchScenarios.CancelableStdioExchange(context, checks));
+            Run(results, "cancelable-stdio-read-blocked", checks => WindowsLaunchScenarios.CancelableStdioReadBlocked(context, checks));
+            Run(results, "cancelable-stdio-write-backpressure", checks => WindowsLaunchScenarios.CancelableStdioWriteBackpressure(context, checks));
+            Run(results, "cancelable-stdio-broken-pipe", checks => WindowsLaunchScenarios.CancelableStdioBrokenPipe(context, checks));
+            Run(results, "cancelable-stdio-read-cancel", checks => WindowsLaunchScenarios.CancelableStdioReadCancel(context, checks));
+            Run(results, "cancelable-stdio-races", checks => WindowsLaunchScenarios.CancelableStdioRaces(context, checks));
+            Run(results, "cancelable-stdio-lifecycle", checks => WindowsLaunchScenarios.CancelableStdioLifecycle(context, checks));
+            Run(results, "cancelable-stdio-teardown-gated", checks => WindowsLaunchScenarios.CancelableStdioTeardownGated(context, checks));
+            Run(results, "cancelable-stdio-second-pump-fault", checks => WindowsLaunchScenarios.CancelableStdioSecondPumpFault(context, checks));
+            Run(results, "cancelable-stdio-unknown-pending", checks => WindowsLaunchScenarios.CancelableStdioUnknownPending(context, checks));
             Run(results, "no-start", checks => WindowsLaunchScenarios.NoStart(context, checks));
         }
         catch (Exception error)
         {
             status = "ERROR";
-            results.Add(new TestReceipt("runner", "FAIL", 0, new[] { $"{error.GetType().Name}: {error.Message}" }));
+            results.Add(new TestReceipt(
+                "runner",
+                "FAIL",
+                0,
+                new[] { $"{error.GetType().Name}: {error.Message}" },
+                new Dictionary<string, string>()));
         }
 
         var failed = results.Where(result => !string.Equals(result.Status, "PASS", StringComparison.Ordinal)).ToArray();
@@ -181,7 +207,8 @@ internal static class TestRunner
             name,
             passed ? "PASS" : "FAIL",
             Math.Round(stopwatch.Elapsed.TotalMilliseconds, 1),
-            failures));
+            failures,
+            checks.Evidence));
         Console.WriteLine(
             $"{(passed ? "PASS" : "FAIL")} {name} ({stopwatch.Elapsed.TotalMilliseconds:0} ms)"
             + (passed ? string.Empty : $" :: {string.Join(" | ", failures)}"));
@@ -229,6 +256,21 @@ internal static class TestRunner
                 launchConstraint = "Pipe-enabled launches serialize inside the owner process; arbitrary concurrent spawns must not run in the dedicated launcher because the three child ends are inheritable during the bounded create window",
                 shutdown = "Graceful shutdown is close/dispose stdin (EOF), bounded wait/settlement, then dispose OwnedProcess/streams. Dispose alone is forced cleanup via job close/kill-on-close.",
                 sentinelEvidence = "The unrelated-handle sentinel check is behavioral and numeric-handle based; a handle-value collision can cause a false failure only, never a false pass.",
+                cancelableMode = new
+                {
+                    mode = "ChildStdioMode.CancelablePipes (opt-in; None and Pipes are unchanged)",
+                    transport = "three private local named-pipe pairs; the parent end is FILE_FLAG_OVERLAPPED, the child end is a synchronous inheritable client handle passed through PROC_THREAD_ATTRIBUTE_HANDLE_LIST",
+                    endpointBoundary = "fresh unpredictable GUID name, FILE_FLAG_FIRST_PIPE_INSTANCE, protected DACL granting only the current process user, exactly one instance, PIPE_REJECT_REMOTE_CLIENTS, and the parent opens the sole client handle before the child is created, so no other local or remote client can connect",
+                    peerVerification = "before handoff the controlled process verifies the pair with GetNamedPipeInfo (server/client end roles) and cross-checks GetNamedPipeClientProcessId/GetNamedPipeServerProcessId from both server and client handle views; every observed process ID must be the current controlled process, so a GUID or DACL alone is never accepted as peer proof",
+                    connect = "the parent opens the only client end first, so ConnectNamedPipe observes ERROR_PIPE_CONNECTED without submitting I/O; if the OS still reports a pending connect, the exact operation is cancelled, harvested, or retained with no free, and the launch fails closed",
+                    completion = "each native ReadFile/WriteFile result is harvested with GetOverlappedResult on the exact OVERLAPPED; cancellation calls CancelIoEx with that same pointer and the completion event remains authoritative",
+                    backpressure = "at most one bounded operation per direction; a second send returns Backpressure instead of queueing, and the pipe buffer is 4 KiB so a larger write to a non-reading child stays pending",
+                    stopGate = "a stop flag is checked under the same lock that submits I/O, so no later send or read issues a native operation; a rejected send records StopObservedBeforeSubmit",
+                    writeOwnership = "every write has a stable operation identity, one authoritative observer and one stored completion result protected by the submit/harvest gate; a concurrent observer is refused before any wait or effect, and a forced dispose linearizes its close with the same teardown lock as the bounded stop",
+                    lifecycle = "the facade admits public calls, refuses new calls after disposal starts, force-stops the channels, and waits a bounded interval before releasing shared wait handles; a still-admitted caller finalizes them on exit, so no admitted wait observes a disposed handle",
+                    unsettled = "a caller deadline never cancels or frees a running operation; a cancel that does not settle within the bound is classified UnknownPending and its buffers/event are retained for process lifetime. Process-wide retention has an admission cap; at the cap, new cancelable launches are refused until the launcher process is recycled",
+                    partialWrites = "a cancelled, faulted, or still-pending write reports StdioDelivery.Unknown because a partial delivery cannot be ruled out; only an observed positive byte count reports Delivered",
+                },
             },
             cleanupSemantics = new
             {
@@ -261,6 +303,9 @@ internal static class TestRunner
                 "The component is a native library/framework artifact; it is not installed, packaged or reachable from the host or relay. No maintained Codex app-server or daemon is installed or bound.",
                 "Pipe custody is library-only and synchronous. It is not wired to the host, Codex app-server, relay or any remote command surface; ACL hardening and reparse-point checks remain later slices.",
                 "Pipe-enabled launches create three inheritable child ends for the bounded create window. The owner process must be a dedicated launcher; other arbitrary spawns must not run concurrently, and the implementation serializes pipe-enabled launches but cannot stop unrelated code from calling inherit-all spawn APIs.",
+                "CancelablePipes is library-only and not bound to a host, Codex app-server, relay or remote command surface. It observes native Windows I/O completion; it does not infer or report a provider/agent turn outcome.",
+                "The anonymous-pipe Pipes mode remains synchronous. The overlapped cancelable mode uses private local named pipes; it creates no listener, socket or network endpoint, rejects remote clients and binds only the single client handle the parent opens.",
+                "The UnknownPending classification is exercised with an injected cancel-boundary failure, not a real CancelIoEx failure. A real timeout and a real pending write are exercised without injection.",
                 "Creation-time job assignment requires Windows 10 1607 or later; this host is Windows 11 26200 x64. If the attribute API is unavailable, launch fails before process creation with Unsupported=true and no fallback. A real host rejection is not exercised; the suite injects the boundary failure.",
                 "Only the creation-time attribute failure, explicit stdio handle-list failure and unsafe resume count are fault-injected; containment verification shares the rollback path but is not separately injected. The resume test injects count 2 and checks record semantics; observed 0, observed >1 and ResumeThread-error branches are not independently executed.",
                 "The synthetic fixtures are same-user; cross-user and AppContainer containment are not covered.",

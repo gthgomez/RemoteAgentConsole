@@ -17,6 +17,16 @@ public enum ChildStdioMode
     /// three explicit handles through <c>PROC_THREAD_ATTRIBUTE_HANDLE_LIST</c>.
     /// </summary>
     Pipes = 1,
+
+    /// <summary>
+    /// Create three private local named-pipe pairs whose parent ends are overlapped and
+    /// cancelable. The child still receives exactly three explicit synchronous inherited
+    /// handles through <c>PROC_THREAD_ATTRIBUTE_HANDLE_LIST</c>; the parent observes native
+    /// completion, can cancel the exact operation with <c>CancelIoEx</c>, and reports a
+    /// finite shutdown/settlement contract. This mode is opt-in; <see cref="None"/> and
+    /// <see cref="Pipes"/> keep their existing behavior.
+    /// </summary>
+    CancelablePipes = 2,
 }
 
 /// <summary>

@@ -31,6 +31,26 @@ internal static class NativeMethods
     internal const uint WaitTimeout = 0x00000102;
     internal const uint StillActive = 259;
 
+    // Cancelable parent-side stdio: the parent end of each private pipe is a
+    // FILE_FLAG_OVERLAPPED named-pipe server handle; the child receives a synchronous,
+    // inheritable client handle, so child reads/writes stay ordinary blocking pipe I/O.
+    internal const uint FileFlagOverlapped = 0x40000000;
+    internal const uint FileFlagFirstPipeInstance = 0x00080000;
+    internal const uint PipeAccessInbound = 0x00000001;
+    internal const uint PipeAccessOutbound = 0x00000002;
+    internal const uint PipeAccessDuplex = 0x00000003;
+    internal const uint PipeServerEnd = 0x00000001;
+    internal const uint FileReadAttributes = 0x00000080;
+    internal const uint PipeTypeByte = 0x00000000;
+    internal const uint PipeReadmodeByte = 0x00000000;
+    internal const uint PipeWait = 0x00000000;
+    internal const uint PipeRejectRemoteClients = 0x00000008;
+    internal const uint PipeAcceptRemoteClients = 0x00000000;
+    internal const uint GenericRead = 0x80000000;
+    internal const uint GenericWrite = 0x40000000;
+    internal const uint OpenExisting = 3;
+    internal const int SddlRevision1 = 1;
+
     internal const int JobObjectBasicAccountingInformationClass = 1;
     internal const int JobObjectBasicProcessIdListClass = 3;
     internal const int JobObjectExtendedLimitInformationClass = 9;
@@ -41,6 +61,16 @@ internal static class NativeMethods
     internal const int ErrorInvalidParameter = 87;
     internal const int ErrorCallNotImplemented = 120;
     internal const int ErrorInsufficientBuffer = 122;
+    internal const int ErrorHandleEof = 38;
+    internal const int ErrorBrokenPipe = 109;
+    internal const int ErrorNoData = 232;
+    internal const int ErrorPipeConnected = 535;
+    internal const int ErrorPipeNotConnected = 233;
+    internal const int ErrorIoIncomplete = 996;
+    internal const int ErrorIoPending = 997;
+    internal const int ErrorOperationAborted = 995;
+    internal const int ErrorNotFound = 1168;
+    internal const int ErrorSemTimeout = 121;
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     internal static extern SafeJobHandle CreateJobObjectW(IntPtr jobAttributes, string? name);
@@ -102,6 +132,104 @@ internal static class NativeMethods
         SafeFileHandle handle,
         uint mask,
         uint flags);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    internal static extern SafeFileHandle CreateNamedPipeW(
+        string pipeName,
+        uint openMode,
+        uint pipeMode,
+        uint maximumInstances,
+        uint outboundBufferSize,
+        uint inboundBufferSize,
+        uint defaultTimeout,
+        ref SecurityAttributes pipeAttributes);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    internal static extern SafeFileHandle CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        ref SecurityAttributes fileAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ConnectNamedPipe(SafeFileHandle pipe, IntPtr overlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetNamedPipeInfo(
+        SafeFileHandle pipe,
+        out uint flags,
+        out uint outboundBufferSize,
+        out uint inboundBufferSize,
+        out uint maximumInstances);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetNamedPipeClientProcessId(SafeFileHandle pipe, out uint clientProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetNamedPipeServerProcessId(SafeFileHandle pipe, out uint serverProcessId);
+
+    [DllImport("kernel32.dll")]
+    internal static extern uint GetCurrentProcessId();
+
+    /// <summary>
+    /// Issues overlapped <c>ReadFile</c>. <paramref name="bytesRead"/> must be
+    /// <see cref="IntPtr.Zero"/>; the count is collected with <c>GetOverlappedResult</c>.
+    /// </summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ReadFile(
+        SafeFileHandle handle,
+        IntPtr buffer,
+        uint bytesToRead,
+        IntPtr bytesRead,
+        IntPtr overlapped);
+
+    /// <summary>
+    /// Issues overlapped <c>WriteFile</c>. <paramref name="bytesWritten"/> must be
+    /// <see cref="IntPtr.Zero"/>; the count is collected with <c>GetOverlappedResult</c>.
+    /// </summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool WriteFile(
+        SafeFileHandle handle,
+        IntPtr buffer,
+        uint bytesToWrite,
+        IntPtr bytesWritten,
+        IntPtr overlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetOverlappedResult(
+        SafeFileHandle handle,
+        IntPtr overlapped,
+        out uint bytesTransferred,
+        [MarshalAs(UnmanagedType.Bool)] bool wait);
+
+    /// <summary>
+    /// Cancels the exact overlapped operation identified by <paramref name="overlapped"/>.
+    /// <c>ERROR_NOT_FOUND</c> means the operation had already completed.
+    /// </summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CancelIoEx(SafeFileHandle handle, IntPtr overlapped);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        string stringSecurityDescriptor,
+        uint revision,
+        out IntPtr securityDescriptor,
+        out uint securityDescriptorSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr LocalFree(IntPtr memory);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -166,6 +294,20 @@ internal static class NativeMethods
         internal int Length;
         internal IntPtr SecurityDescriptor;
         internal int InheritHandle;
+    }
+
+    /// <summary>
+    /// The <c>OVERLAPPED</c> bytes for one bounded pipe operation. Only the completion
+    /// event is written from managed code; the kernel owns the remaining fields.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeOverlapped
+    {
+        internal IntPtr Internal;
+        internal IntPtr InternalHigh;
+        internal uint Offset;
+        internal uint OffsetHigh;
+        internal IntPtr EventHandle;
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -18,6 +18,9 @@ internal sealed class StdioPipes : IDisposable
     /// Serializes pipe-enabled launches in this OS process across the bounded interval
     /// in which inheritable child ends and the explicit handle list exist. Other
     /// process-spawning code must not run concurrently in a dedicated owner launcher.
+    /// This serializes setup only; it does not exclude active owners.
+    /// <see cref="CancelableOwnerLease"/> provides the single-owner admission for the
+    /// cancelable mode.
     /// </summary>
     internal static object InheritanceWindow { get; } = new();
 

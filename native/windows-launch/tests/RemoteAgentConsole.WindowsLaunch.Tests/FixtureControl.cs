@@ -199,8 +199,13 @@ internal sealed class FixtureControl
 internal sealed class Checks
 {
     private readonly List<string> _failures = new();
+    private readonly Dictionary<string, string> _evidence = new(StringComparer.Ordinal);
 
     internal IReadOnlyList<string> Failures => _failures;
+
+    internal IReadOnlyDictionary<string, string> Evidence => _evidence;
+
+    internal void Note(string name, string value) => _evidence[name] = value;
 
     internal void True(bool condition, string message)
     {
