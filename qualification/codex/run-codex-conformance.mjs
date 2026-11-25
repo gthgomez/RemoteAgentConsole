@@ -26,8 +26,8 @@ import { AppServerSession, DEFAULT_LIMITS } from "./lib/app-server-client.mjs";
 import { createByteBoundedBuffer, scalarError, versionLabel } from "./lib/bounds.mjs";
 import {
   buildChildEnv,
-  classifyUsages,
   CONTAINMENT_NOTE,
+  classifyUsages,
   describeExit,
   ISOLATED_ENV_NAMES,
   parseMethodLiteral,

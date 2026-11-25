@@ -85,7 +85,7 @@ async function createWorld() {
     "Copyright (c) fixture",
     "",
     "Permission is hereby granted, free of charge, to any person obtaining a copy",
-    "of this software and associated documentation files (the \"Software\"), to deal",
+    'of this software and associated documentation files (the "Software"), to deal',
     "in the Software without restriction.",
     "",
   ].join("\n");
@@ -106,8 +106,7 @@ async function createWorld() {
     // The last patch modifies a file introduced by the first patch so the
     // receipt verifier must use the final per-path check, not the first one.
     const fileName = index === 5 ? "patch-1.txt" : `patch-${index}.txt`;
-    const content =
-      index === 5 ? "ordered patch 1\nordered patch 5\n" : `ordered patch ${index}\n`;
+    const content = index === 5 ? "ordered patch 1\nordered patch 5\n" : `ordered patch ${index}\n`;
     await write(join(happier, fileName), content);
     const currentCommit = commit(happier, `fixture: ordered patch ${index}`);
     const patch = execFileSync(
@@ -272,65 +271,62 @@ function cleanup(world) {
   return rm(world.root, { recursive: true, force: true });
 }
 
-test(
-  "qualifies an exact codex-only source candidate without Babel or install claims",
-  async (t) => {
-    const world = await createWorld();
-    t.after(() => cleanup(world));
+test("qualifies an exact codex-only source candidate without Babel or install claims", async (t) => {
+  const world = await createWorld();
+  t.after(() => cleanup(world));
 
-    const receipt = await qualifyCandidate(qualifyOptions(world));
+  const receipt = await qualifyCandidate(qualifyOptions(world));
 
-    assert.equal(receipt.receiptType, "rac-composition-candidate-qualification");
-    assert.equal(receipt.scope, "codex-only");
-    assert.equal(receipt.disposition, "structural-qualified-source-only-not-an-installed-product");
-    assert.equal(receipt.structuralChecks.status, "pass");
-    assert.equal(receipt.inputs.binding, "selected-rac-commit-blobs");
-    assert.equal(receipt.components.rac.identityBound, true);
-    assert.equal(receipt.components.rac.selected.commit, world.racCommit);
-    assert.equal(receipt.components.rac.selected.checkoutKind, "exact");
-    assert.equal(receipt.components.rac.selected.headIsMerge, false);
-    assert.equal(receipt.components.rac.baseline.commit, world.baseRac);
-    assert.equal(receipt.components.rac.selected.baselineContained, true);
-    assert.equal(receipt.components.babel.scope, "excluded");
-    assert.equal(receipt.components.babel.identityBound, false);
-    assert.equal(receipt.components.babel.selected, null);
-    assert.equal(receipt.coverage.babel, "not-covered");
-    assert.equal(receipt.candidateIsolation.structuralCandidate, "disposable staged checkout");
-    assert.equal(receipt.candidateIsolation.sourceWorktreeClean, "not-claimed");
-    assert.equal(receipt.coverage.sourceWorktree, "not-covered");
-    assert.equal(receipt.trustBoundary.classification, "structural-pr-check");
-    assert.equal(receipt.trustBoundary.baselinePins, "declared-by-selected-rac-commit");
-    assert.equal(receipt.trustBoundary.trustedMergeGate, false);
-    assert.equal(receipt.trustBoundary.independentApproval, false);
-    assert.equal(receipt.components.happier.identityBound, true);
-    assert.equal(receipt.components.happier.receiptBinding, "selected-rac-commit-blobs");
-    assert.equal(receipt.components.happier.selected.patchCount, 5);
-    assert.equal(receipt.components.happier.selected.patchedTree, world.patchedTree);
-    assert.deepEqual(receipt.components.happier.patchedTreeBinding, {
-      value: world.patchedTree,
-      source: "cli-argument",
-    });
-    assert.equal(receipt.components.happier.license.spdx, "MIT");
-    assert.equal(receipt.referenceArtifacts.status, "files-verified");
-    assert.equal(receipt.referenceArtifacts.classification, "compatibility-reference-only");
-    assert.equal(receipt.installation.status, "not-qualified");
-    assert.equal(receipt.installation.installedProduct, false);
-    assert.equal(receipt.installation.activation, "closed");
-    assert.deepEqual(receipt.installation.profiles, []);
-    assert.equal(receipt.builtEvidence.status, "not-run");
-    assert.equal(receipt.builtEvidence.installedProduct, false);
-    assert.equal(receipt.builtEvidence.receiptOnly, true);
-    assert.equal(receipt.builtEvidence.binariesVerified, false);
-    assert.equal(receipt.builtEvidence.installProof, false);
-    assert.equal(receipt.builtEvidence.activationProof, false);
-    assert.equal(receipt.productClaims.installedProduct, false);
-    assert.equal(receipt.productClaims.referenceArtifactsAreCompatibilityInputsOnly, true);
-    assert.equal(receipt.buildReadiness.buildsAttempted, false);
-    assert.equal(receipt.buildReadiness.matchesPin, false);
-    assert.ok(receipt.buildReadiness.reasons.length > 0);
-    assert.equal(receipt.buildReadiness.observed.node, process.versions.node);
-  },
-);
+  assert.equal(receipt.receiptType, "rac-composition-candidate-qualification");
+  assert.equal(receipt.scope, "codex-only");
+  assert.equal(receipt.disposition, "structural-qualified-source-only-not-an-installed-product");
+  assert.equal(receipt.structuralChecks.status, "pass");
+  assert.equal(receipt.inputs.binding, "selected-rac-commit-blobs");
+  assert.equal(receipt.components.rac.identityBound, true);
+  assert.equal(receipt.components.rac.selected.commit, world.racCommit);
+  assert.equal(receipt.components.rac.selected.checkoutKind, "exact");
+  assert.equal(receipt.components.rac.selected.headIsMerge, false);
+  assert.equal(receipt.components.rac.baseline.commit, world.baseRac);
+  assert.equal(receipt.components.rac.selected.baselineContained, true);
+  assert.equal(receipt.components.babel.scope, "excluded");
+  assert.equal(receipt.components.babel.identityBound, false);
+  assert.equal(receipt.components.babel.selected, null);
+  assert.equal(receipt.coverage.babel, "not-covered");
+  assert.equal(receipt.candidateIsolation.structuralCandidate, "disposable staged checkout");
+  assert.equal(receipt.candidateIsolation.sourceWorktreeClean, "not-claimed");
+  assert.equal(receipt.coverage.sourceWorktree, "not-covered");
+  assert.equal(receipt.trustBoundary.classification, "structural-pr-check");
+  assert.equal(receipt.trustBoundary.baselinePins, "declared-by-selected-rac-commit");
+  assert.equal(receipt.trustBoundary.trustedMergeGate, false);
+  assert.equal(receipt.trustBoundary.independentApproval, false);
+  assert.equal(receipt.components.happier.identityBound, true);
+  assert.equal(receipt.components.happier.receiptBinding, "selected-rac-commit-blobs");
+  assert.equal(receipt.components.happier.selected.patchCount, 5);
+  assert.equal(receipt.components.happier.selected.patchedTree, world.patchedTree);
+  assert.deepEqual(receipt.components.happier.patchedTreeBinding, {
+    value: world.patchedTree,
+    source: "cli-argument",
+  });
+  assert.equal(receipt.components.happier.license.spdx, "MIT");
+  assert.equal(receipt.referenceArtifacts.status, "files-verified");
+  assert.equal(receipt.referenceArtifacts.classification, "compatibility-reference-only");
+  assert.equal(receipt.installation.status, "not-qualified");
+  assert.equal(receipt.installation.installedProduct, false);
+  assert.equal(receipt.installation.activation, "closed");
+  assert.deepEqual(receipt.installation.profiles, []);
+  assert.equal(receipt.builtEvidence.status, "not-run");
+  assert.equal(receipt.builtEvidence.installedProduct, false);
+  assert.equal(receipt.builtEvidence.receiptOnly, true);
+  assert.equal(receipt.builtEvidence.binariesVerified, false);
+  assert.equal(receipt.builtEvidence.installProof, false);
+  assert.equal(receipt.builtEvidence.activationProof, false);
+  assert.equal(receipt.productClaims.installedProduct, false);
+  assert.equal(receipt.productClaims.referenceArtifactsAreCompatibilityInputsOnly, true);
+  assert.equal(receipt.buildReadiness.buildsAttempted, false);
+  assert.equal(receipt.buildReadiness.matchesPin, false);
+  assert.ok(receipt.buildReadiness.reasons.length > 0);
+  assert.equal(receipt.buildReadiness.observed.node, process.versions.node);
+});
 
 test("complete composition scope binds the actual detached Babel candidate", async (t) => {
   const world = await createWorld();
@@ -439,15 +435,12 @@ test("ignores caller inputs, ambient Git overrides, and replacement objects", as
   const world = await createWorld();
   t.after(() => cleanup(world));
 
-  const originalBlob = git(world.rac, [
-    "rev-parse",
-    "HEAD:patches/happier/0001-fixture.patch",
-  ]);
-  const replacementBlob = execFileSync(
-    "git",
-    ["-C", world.rac, "hash-object", "-w", "--stdin"],
-    { input: "replacement patch bytes\n", encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
-  ).trim();
+  const originalBlob = git(world.rac, ["rev-parse", "HEAD:patches/happier/0001-fixture.patch"]);
+  const replacementBlob = execFileSync("git", ["-C", world.rac, "hash-object", "-w", "--stdin"], {
+    input: "replacement patch bytes\n",
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
   git(world.rac, ["replace", originalBlob, replacementBlob]);
 
   const ambient = {
@@ -682,10 +675,7 @@ test("rejects candidate content outside the declared patch series or build outpu
   await rm(join(world.candidate, "build-output.bin"));
 
   await mkdir(join(world.candidate, "node_modules"));
-  await assert.rejects(
-    qualifyCandidate(qualifyOptions(world)),
-    /contains build or install output/,
-  );
+  await assert.rejects(qualifyCandidate(qualifyOptions(world)), /contains build or install output/);
 });
 
 test("accepts reported source-build evidence only as a receipt", async (t) => {
@@ -792,14 +782,11 @@ test("checked-in reference artifacts remain compatibility inputs only", async ()
     await readFile(join(REPO_ROOT, "distribution", "composition-lock.json"), "utf8"),
   );
 
-  assert.deepEqual(
-    lock.referenceArtifacts.map((item) => item.id).sort(),
-    [
-      "happier-cli-windows-x64",
-      "happier-server-windows-x64",
-      "happier-standalone-web-reference",
-    ],
-  );
+  assert.deepEqual(lock.referenceArtifacts.map((item) => item.id).sort(), [
+    "happier-cli-windows-x64",
+    "happier-server-windows-x64",
+    "happier-standalone-web-reference",
+  ]);
   for (const item of lock.referenceArtifacts) {
     assert.match(item.sha256, /^[a-f0-9]{64}$/);
     assert.match(item.sourceCommit, /^[a-f0-9]{40}$/);

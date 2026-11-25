@@ -53,38 +53,143 @@
   },
   "cases": {
     "approval": [
-      { "id": "unrestricted-session-unchanged", "flag": false, "decision": "approved_for_session", "expectStock": true },
-      { "id": "unrestricted-execpolicy-unchanged", "flag": false, "decision": "approved_execpolicy_amendment", "expectStock": true },
-      { "id": "restricted-once-stock-accept", "flag": true, "decision": "approved", "expectStock": true },
-      { "id": "restricted-session-declined", "flag": true, "decision": "approved_for_session", "expected": { "decision": "decline" } },
-      { "id": "restricted-execpolicy-declined", "flag": true, "decision": "approved_execpolicy_amendment", "expected": { "decision": "decline" } },
+      {
+        "id": "unrestricted-session-unchanged",
+        "flag": false,
+        "decision": "approved_for_session",
+        "expectStock": true
+      },
+      {
+        "id": "unrestricted-execpolicy-unchanged",
+        "flag": false,
+        "decision": "approved_execpolicy_amendment",
+        "expectStock": true
+      },
+      {
+        "id": "restricted-once-stock-accept",
+        "flag": true,
+        "decision": "approved",
+        "expectStock": true
+      },
+      {
+        "id": "restricted-session-declined",
+        "flag": true,
+        "decision": "approved_for_session",
+        "expected": { "decision": "decline" }
+      },
+      {
+        "id": "restricted-execpolicy-declined",
+        "flag": true,
+        "decision": "approved_execpolicy_amendment",
+        "expected": { "decision": "decline" }
+      },
       { "id": "restricted-denied-stock", "flag": true, "decision": "denied", "expectStock": true },
       { "id": "restricted-abort-stock", "flag": true, "decision": "abort", "expectStock": true }
     ],
     "permissions": [
       { "id": "unrestricted-permissions-unchanged", "flag": false, "expectStock": true },
-      { "id": "restricted-permissions-declined", "flag": true, "expected": { "permissions": {}, "scope": "turn" } }
+      {
+        "id": "restricted-permissions-declined",
+        "flag": true,
+        "expected": { "permissions": {}, "scope": "turn" }
+      }
     ],
     "elicitation": [
-      { "id": "unrestricted-session-unchanged", "flag": false, "decision": "approved_for_session", "expectStock": true },
-      { "id": "restricted-session-declined", "flag": true, "decision": "approved_for_session", "expected": "decline" },
+      {
+        "id": "unrestricted-session-unchanged",
+        "flag": false,
+        "decision": "approved_for_session",
+        "expectStock": true
+      },
+      {
+        "id": "restricted-session-declined",
+        "flag": true,
+        "decision": "approved_for_session",
+        "expected": "decline"
+      },
       { "id": "restricted-once-stock", "flag": true, "decision": "approved", "expectStock": true },
       { "id": "restricted-denied-stock", "flag": true, "decision": "denied", "expectStock": true }
     ],
     "handler": [
-      { "id": "unrestricted-session-unchanged", "flag": false, "requestKind": "permission", "decision": "approved_for_session", "expected": "approved_for_session" },
-      { "id": "restricted-session-denied", "flag": true, "requestKind": "permission", "decision": "approved_for_session", "expected": "denied" },
-      { "id": "restricted-execpolicy-denied", "flag": true, "requestKind": "permission", "decision": "approved_execpolicy_amendment", "expected": "denied" },
-      { "id": "restricted-user-action-unchanged", "flag": true, "requestKind": "user_action", "decision": "approved_for_session", "expected": "approved_for_session" },
-      { "id": "restricted-once-unchanged", "flag": true, "requestKind": "permission", "decision": "approved", "expected": "approved" },
-      { "id": "restricted-denied-unchanged", "flag": true, "requestKind": "permission", "decision": "denied", "expected": "denied" }
+      {
+        "id": "unrestricted-session-unchanged",
+        "flag": false,
+        "requestKind": "permission",
+        "decision": "approved_for_session",
+        "expected": "approved_for_session"
+      },
+      {
+        "id": "restricted-session-denied",
+        "flag": true,
+        "requestKind": "permission",
+        "decision": "approved_for_session",
+        "expected": "denied"
+      },
+      {
+        "id": "restricted-execpolicy-denied",
+        "flag": true,
+        "requestKind": "permission",
+        "decision": "approved_execpolicy_amendment",
+        "expected": "denied"
+      },
+      {
+        "id": "restricted-user-action-unchanged",
+        "flag": true,
+        "requestKind": "user_action",
+        "decision": "approved_for_session",
+        "expected": "approved_for_session"
+      },
+      {
+        "id": "restricted-once-unchanged",
+        "flag": true,
+        "requestKind": "permission",
+        "decision": "approved",
+        "expected": "approved"
+      },
+      {
+        "id": "restricted-denied-unchanged",
+        "flag": true,
+        "requestKind": "permission",
+        "decision": "denied",
+        "expected": "denied"
+      }
     ],
     "fixedMapping": [
-      { "id": "restricted-approval-shaped-rejected", "flag": true, "method": "item/tool/requestUserInput", "approvalShaped": true, "expected": true },
-      { "id": "restricted-ordinary-input-allowed", "flag": true, "method": "item/tool/requestUserInput", "approvalShaped": false, "expected": false },
-      { "id": "unrestricted-approval-shaped-allowed", "flag": false, "method": "item/tool/requestUserInput", "approvalShaped": true, "expected": false },
-      { "id": "typed-command-approval-not-user-input", "flag": true, "method": "item/commandExecution/requestApproval", "approvalShaped": true, "expected": false },
-      { "id": "typed-file-approval-not-user-input", "flag": true, "method": "item/fileChange/requestApproval", "approvalShaped": true, "expected": false }
+      {
+        "id": "restricted-approval-shaped-rejected",
+        "flag": true,
+        "method": "item/tool/requestUserInput",
+        "approvalShaped": true,
+        "expected": true
+      },
+      {
+        "id": "restricted-ordinary-input-allowed",
+        "flag": true,
+        "method": "item/tool/requestUserInput",
+        "approvalShaped": false,
+        "expected": false
+      },
+      {
+        "id": "unrestricted-approval-shaped-allowed",
+        "flag": false,
+        "method": "item/tool/requestUserInput",
+        "approvalShaped": true,
+        "expected": false
+      },
+      {
+        "id": "typed-command-approval-not-user-input",
+        "flag": true,
+        "method": "item/commandExecution/requestApproval",
+        "approvalShaped": true,
+        "expected": false
+      },
+      {
+        "id": "typed-file-approval-not-user-input",
+        "flag": true,
+        "method": "item/fileChange/requestApproval",
+        "approvalShaped": true,
+        "expected": false
+      }
     ],
     "fixedError": [
       { "id": "fixed-message", "expectedMessage": "restricted_deployment_requires_typed_approval" },
@@ -118,7 +223,11 @@
     ],
     "invalidClaimCapacity": [0, -1, 1.5],
     "claimErrors": [
-      { "id": "settled", "reason": "settled", "expectedMessage": "restricted_approval_occurrence_settled" },
+      {
+        "id": "settled",
+        "reason": "settled",
+        "expectedMessage": "restricted_approval_occurrence_settled"
+      },
       { "id": "full", "reason": "full", "expectedMessage": "restricted_approval_occurrence_full" }
     ]
   },

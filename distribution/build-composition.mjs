@@ -139,8 +139,7 @@ function gitProbe(repo, args, { indexFile = null } = {}) {
 }
 
 function gitBlobBytes(repo, commit, path) {
-  const revision =
-    commit === "HEAD" ? "HEAD" : assertFullCommit(commit, "Git blob revision");
+  const revision = commit === "HEAD" ? "HEAD" : assertFullCommit(commit, "Git blob revision");
   assertSafeRepoPath(path, "Git blob path");
   const result = spawnSync(
     "git",
@@ -484,10 +483,7 @@ function patchFilePathsFromBytes(repo, bytes, label) {
     .split("\n")
     .filter(Boolean)
     .map((line) => line.split("\t").slice(2).join("\t"));
-  if (
-    !paths.length ||
-    paths.some((path) => !path || path.startsWith("/") || path.includes("\\"))
-  ) {
+  if (!paths.length || paths.some((path) => !path || path.startsWith("/") || path.includes("\\"))) {
     fail(`Patch ${label} has no safe, reportable file paths`);
   }
   for (const path of paths) {
@@ -503,9 +499,9 @@ async function applyPatchSeries({ candidateRepo, patches, lock }) {
     fail("Candidate is not at the pinned Happier commit");
   const applied = [];
   for (const patch of patches) {
-    const relativePatch = (
-      patch.relativePath ?? relative(REPO_ROOT, patch.path)
-    ).split(sep).join("/");
+    const relativePatch = (patch.relativePath ?? relative(REPO_ROOT, patch.path))
+      .split(sep)
+      .join("/");
     const patchBytes = patch.bytes ?? (await readFile(patch.path));
     const paths = patchFilePathsFromBytes(candidateRepo, patchBytes, relativePatch);
     assertGitInput(
@@ -600,10 +596,7 @@ function verifyRacCandidate({ racRepo, expectedCommit, lock }) {
     fail(`RAC origin does not match the declared repository pin ${baseline.url}`);
   }
   verifyCleanRepository(racRepo, "RAC");
-  const baselineTreeProbe = gitProbe(racRepo, [
-    "rev-parse",
-    `${baseline.commit}^{tree}`,
-  ]);
+  const baselineTreeProbe = gitProbe(racRepo, ["rev-parse", `${baseline.commit}^{tree}`]);
   if (baselineTreeProbe.error) {
     fail(`git rev-parse could not start: ${baselineTreeProbe.error.message}`);
   }
@@ -620,12 +613,7 @@ function verifyRacCandidate({ racRepo, expectedCommit, lock }) {
       `Declared RAC baseline tree mismatch: expected ${baseline.tree}, got ${baselineTreeProbe.stdout.trim()}`,
     );
   }
-  const containment = gitProbe(racRepo, [
-    "merge-base",
-    "--is-ancestor",
-    baseline.commit,
-    head,
-  ]);
+  const containment = gitProbe(racRepo, ["merge-base", "--is-ancestor", baseline.commit, head]);
   if (containment.error) fail(`git merge-base could not start: ${containment.error.message}`);
   if (containment.status === 128) {
     fail(
@@ -1393,8 +1381,7 @@ export async function qualifyCandidate({
     candidateIsolation: {
       structuralCandidate: "disposable staged checkout",
       sourceWorktreeClean: "not-claimed",
-      note:
-        "The receipt binds the selected commits, trees and recomputed patched tree. It does not certify the originating source worktree as clean.",
+      note: "The receipt binds the selected commits, trees and recomputed patched tree. It does not certify the originating source worktree as clean.",
     },
     trustBoundary: {
       classification: "structural-pr-check",
@@ -1523,10 +1510,7 @@ function parseArgs(argv) {
       fail("qualify requires --scope codex-only or --scope composition");
     }
     if (!options.racCommit) fail("qualify requires an explicit --rac-commit");
-    if (
-      options.scope === "composition" &&
-      (!options.babelCommit || !options.babelTree)
-    ) {
+    if (options.scope === "composition" && (!options.babelCommit || !options.babelTree)) {
       fail("composition scope requires --babel-commit and --babel-tree");
     }
   }

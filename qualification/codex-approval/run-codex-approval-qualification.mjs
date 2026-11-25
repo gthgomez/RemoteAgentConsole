@@ -22,7 +22,17 @@ import { lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { archiveTo, blobHashAt, createScratchRepository, git, gitBlobHash, gitOrThrow, objectType, readBlob, sha256Bytes } from "../codex-adapter/lib/git.mjs";
+import {
+  archiveTo,
+  blobHashAt,
+  createScratchRepository,
+  git,
+  gitBlobHash,
+  gitOrThrow,
+  objectType,
+  readBlob,
+  sha256Bytes,
+} from "../codex-adapter/lib/git.mjs";
 import { redactString, redactValue } from "../codex-adapter/lib/redact.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -152,7 +162,8 @@ function isAbsoluteToolPath(value) {
 }
 
 async function inspectTrustedTool(path, label) {
-  if (!isAbsoluteToolPath(path)) return { label, ok: false, reason: "must be an absolute Windows path" };
+  if (!isAbsoluteToolPath(path))
+    return { label, ok: false, reason: "must be an absolute Windows path" };
   let stats;
   try {
     stats = await lstat(path);
@@ -161,7 +172,13 @@ async function inspectTrustedTool(path, label) {
   }
   if (stats.isSymbolicLink()) return { label, ok: false, reason: "is a reparse point" };
   if (!stats.isFile()) return { label, ok: false, reason: "is not a regular file" };
-  return { label, ok: true, name: basename(path), bytes: stats.size, sha256: await sha256File(path) };
+  return {
+    label,
+    ok: true,
+    name: basename(path),
+    bytes: stats.size,
+    sha256: await sha256File(path),
+  };
 }
 
 async function createToolEnvironment(workspaceRoot) {
@@ -248,9 +265,13 @@ function analyzeRouteFacts({
   clientSource,
 }) {
   const factory = findSnippet(runCodexSource, "permissionHandler = createCodexPermissionHandler({");
-  const runtimeCreation = findSnippet(runCodexSource, "codexAppServerRuntime = createCodexAppServerRuntime({");
-  const runtimeCreationBlock =
-    runtimeCreation ? balancedBlock(runCodexSource, runtimeCreation.index) : null;
+  const runtimeCreation = findSnippet(
+    runCodexSource,
+    "codexAppServerRuntime = createCodexAppServerRuntime({",
+  );
+  const runtimeCreationBlock = runtimeCreation
+    ? balancedBlock(runCodexSource, runtimeCreation.index)
+    : null;
   const handlerClass = findSnippet(
     codexHandlerSource,
     "class CodexPermissionHandler extends CodexLikePermissionHandler",
@@ -298,7 +319,10 @@ function analyzeRouteFacts({
     runtimeSource,
     "throw createRestrictedApprovalShapedUserInputError();",
   );
-  const answersBuild = findSnippet(runtimeSource, "const answers = buildCodexRequestUserInputAnswers({");
+  const answersBuild = findSnippet(
+    runtimeSource,
+    "const answers = buildCodexRequestUserInputAnswers({",
+  );
   const requestMatchesActiveTurn = findSnippet(
     runtimeSource,
     "const requestMatchesActiveTurn = options?.allowProviderEffects === false",
@@ -359,11 +383,16 @@ function analyzeRouteFacts({
     const index = historySource.indexOf("async onRequest<T>(");
     return index < 0 ? null : balancedBlock(historySource, index);
   })();
-  const clientHandlerStart = clientSource.indexOf("const result = await handler(message.params, message)");
+  const clientHandlerStart = clientSource.indexOf(
+    "const result = await handler(message.params, message)",
+  );
   const clientHandlerCatchBlock =
     clientHandlerStart < 0
       ? null
-      : clientSource.slice(clientHandlerStart, clientSource.indexOf("const reportExit =", clientHandlerStart));
+      : clientSource.slice(
+          clientHandlerStart,
+          clientSource.indexOf("const reportExit =", clientHandlerStart),
+        );
   const restrictedBuildGuard = findSnippet(
     runtimeSource,
     "requireExplicitOwnerDecision && options?.allowDecisionFallback === true",
@@ -424,7 +453,9 @@ function analyzeRouteFacts({
     occurrenceCatch,
     restrictedRequestHelper,
     runtimeImportsPolicy: runtimeSource.includes("@/agent/permissions/approvalDecisionPolicy"),
-    codexHandlerImportsPolicy: codexHandlerSource.includes("@/security/restrictedDeployment/policy"),
+    codexHandlerImportsPolicy: codexHandlerSource.includes(
+      "@/security/restrictedDeployment/policy",
+    ),
     runtimeRestrictedFlag,
     approvalGuard,
     permissionsGuard,
@@ -741,7 +772,10 @@ async function main() {
       });
       return finalize(report, recorder, options, workspace, redactionRoots, startedAt);
     }
-    recorder.pass("tools.trusted", "owner-trusted absolute Git and tar inputs are present and hashed");
+    recorder.pass(
+      "tools.trusted",
+      "owner-trusted absolute Git and tar inputs are present and hashed",
+    );
     const toolEnv = await createToolEnvironment(workspace.root);
 
     const patchText = await readFile(patchPath, "utf8");
@@ -784,9 +818,15 @@ async function main() {
     const gitOptions = { gitPath: resolve(options.git), env: toolEnv, gitDir: scratchGit };
     const commitType = objectType({ ...gitOptions, objectId: expectations.happier.commit });
     const treeType = objectType({ ...gitOptions, objectId: expectations.happier.tree });
-    const candidateType = objectType({ ...gitOptions, objectId: expectations.happier.candidateTree });
+    const candidateType = objectType({
+      ...gitOptions,
+      objectId: expectations.happier.candidateTree,
+    });
     if (commitType === "commit" && treeType === "tree" && candidateType === "tree") {
-      recorder.pass("happier.objects", "pinned commit, source tree and five-patch candidate tree are present");
+      recorder.pass(
+        "happier.objects",
+        "pinned commit, source tree and five-patch candidate tree are present",
+      );
     } else {
       recorder.blocked("happier.objects", "pinned Happier objects are unavailable", {
         commitType,
@@ -812,7 +852,11 @@ async function main() {
     const sourceHashes = {};
     let sourceMismatch = false;
     for (const [path, expected] of Object.entries(expectations.happier.sourceFiles)) {
-      const actual = blobHashAt({ ...gitOptions, revision: expectations.happier.candidateTree, path });
+      const actual = blobHashAt({
+        ...gitOptions,
+        revision: expectations.happier.candidateTree,
+        path,
+      });
       sourceHashes[path] = actual;
       if (actual !== expected) {
         sourceMismatch = true;
@@ -824,7 +868,10 @@ async function main() {
       report.stoppedAt = "source-binding";
       return finalize(report, recorder, options, workspace, redactionRoots, startedAt);
     }
-    recorder.pass("source.blobs", "pinned route, handler, coordinator and policy dependency blobs match");
+    recorder.pass(
+      "source.blobs",
+      "pinned route, handler, coordinator and policy dependency blobs match",
+    );
 
     const patchReceiptPath = join(dirname(resolve(options.happierPatchObjects)), "receipt.json");
     if (!(await pathExists(patchReceiptPath))) {
@@ -852,8 +899,8 @@ async function main() {
     report.bindings.happier = {
       ...report.bindings.happier,
       patchReceipt: {
-        patchCount: patchReceiptValid ? patchReceipt.patchCount ?? null : null,
-        changedPathCount: patchReceiptValid ? patchReceipt.changedPathCount ?? null : null,
+        patchCount: patchReceiptValid ? (patchReceipt.patchCount ?? null) : null,
+        changedPathCount: patchReceiptValid ? (patchReceipt.changedPathCount ?? null) : null,
         matches,
       },
     };
@@ -873,12 +920,20 @@ async function main() {
 
     const createdFile = expectations.patch.createdFiles[0];
     const createdBefore =
-      git({ ...gitOptions, args: ["cat-file", "-e", `${expectations.happier.candidateTree}:${createdFile}`] })
-        .status === 0;
+      git({
+        ...gitOptions,
+        args: ["cat-file", "-e", `${expectations.happier.candidateTree}:${createdFile}`],
+      }).status === 0;
     if (!createdBefore) {
-      recorder.pass("source.created-file-absent", "policy module is absent from the five-patch candidate tree");
+      recorder.pass(
+        "source.created-file-absent",
+        "policy module is absent from the five-patch candidate tree",
+      );
     } else {
-      recorder.fail("source.created-file-absent", "policy module unexpectedly exists before the patch");
+      recorder.fail(
+        "source.created-file-absent",
+        "policy module unexpectedly exists before the patch",
+      );
       report.stoppedAt = "created-file-present";
       return finalize(report, recorder, options, workspace, redactionRoots, startedAt);
     }
@@ -919,7 +974,10 @@ async function main() {
       });
       return finalize(report, recorder, options, workspace, redactionRoots, startedAt);
     }
-    recorder.pass("patch.applies", "patch applies cleanly to the pinned five-patch candidate fragment");
+    recorder.pass(
+      "patch.applies",
+      "patch applies cleanly to the pinned five-patch candidate fragment",
+    );
 
     const readTree = (path) => readFile(join(workspace.tree, path), "utf8");
     const patchedBlobs = {};
@@ -947,10 +1005,16 @@ async function main() {
       path: "apps/cli/src/backends/codex/runCodex.ts",
       maxBytes: expectations.limits.maxSourceBytes,
     });
-    const codexHandlerSource = await readTree("apps/cli/src/backends/codex/utils/permissionHandler.ts");
-    const codexLikeSource = await readTree("apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts");
+    const codexHandlerSource = await readTree(
+      "apps/cli/src/backends/codex/utils/permissionHandler.ts",
+    );
+    const codexLikeSource = await readTree(
+      "apps/cli/src/agent/permissions/CodexLikePermissionHandler.ts",
+    );
     const runtimeSource = await readTree("apps/cli/src/backends/codex/appServer/runtime.ts");
-    const coordinatorSource = await readTree("apps/cli/src/agent/permissions/permissionRequestCoordinator.ts");
+    const coordinatorSource = await readTree(
+      "apps/cli/src/agent/permissions/permissionRequestCoordinator.ts",
+    );
     const baseSource = await readTree("apps/cli/src/agent/permissions/BasePermissionHandler.ts");
     const historySource = await readTree(
       "apps/cli/src/backends/codex/appServer/codexAppServerHistoryBoundary.ts",
@@ -1176,7 +1240,10 @@ function recordRouteChecks(recorder, facts) {
       { line: facts.runtimeCreation.line },
     );
   } else {
-    recorder.fail("route.appserver-handler", "app-server runtime creation does not pass permissionHandler");
+    recorder.fail(
+      "route.appserver-handler",
+      "app-server runtime creation does not pass permissionHandler",
+    );
     ok = false;
   }
   requireSnippet(
@@ -1190,7 +1257,10 @@ function recordRouteChecks(recorder, facts) {
       "the Codex route does not use the 0001 ProviderEnforcedPermissionHandler guard",
     );
   } else {
-    recorder.fail("route.not-provider-enforced", "ProviderEnforcedPermissionHandler appears in the route");
+    recorder.fail(
+      "route.not-provider-enforced",
+      "ProviderEnforcedPermissionHandler appears in the route",
+    );
     ok = false;
   }
 
@@ -1234,7 +1304,10 @@ function recordRouteChecks(recorder, facts) {
     recorder.pass(
       "coordinator.cache-gated",
       "coordinator neither reads nor records cached decisions when disabled",
-      { readLine: facts.coordinatorCacheRead?.line ?? null, writeLine: facts.coordinatorCacheWrite.line },
+      {
+        readLine: facts.coordinatorCacheRead?.line ?? null,
+        writeLine: facts.coordinatorCacheWrite.line,
+      },
     );
   } else {
     recorder.fail("coordinator.cache-gated", "coordinator cache gating is incomplete");
@@ -1246,7 +1319,10 @@ function recordRouteChecks(recorder, facts) {
       "restricted mode never replaces or deletes a completed request under the same id",
     );
   } else {
-    recorder.fail("coordinator.no-completed-replacement", "a completed-request replacement remains");
+    recorder.fail(
+      "coordinator.no-completed-replacement",
+      "a completed-request replacement remains",
+    );
     ok = false;
   }
   if (
@@ -1262,7 +1338,10 @@ function recordRouteChecks(recorder, facts) {
       { claimLine: facts.seenClaimCall.line, publishLine: facts.publishCall.line },
     );
   } else {
-    recorder.fail("coordinator.seen-claim-before-prompt", "seen-occurrence claim wiring is missing or ordered after publication");
+    recorder.fail(
+      "coordinator.seen-claim-before-prompt",
+      "seen-occurrence claim wiring is missing or ordered after publication",
+    );
     ok = false;
   }
   requireSnippet(
@@ -1381,7 +1460,10 @@ function recordRouteChecks(recorder, facts) {
   }
 
   if (facts.runtimeImportsPolicy && facts.codexHandlerImportsPolicy) {
-    recorder.pass("source.policy-imports", "runtime and Codex handler import the maintained policy");
+    recorder.pass(
+      "source.policy-imports",
+      "runtime and Codex handler import the maintained policy",
+    );
   } else {
     recorder.fail("source.policy-imports", "a required policy import is missing");
     ok = false;
@@ -1389,8 +1471,7 @@ function recordRouteChecks(recorder, facts) {
 
   const fencing = facts.providerFencing;
   if (
-    fencing &&
-    fencing.ensureActiveTurn &&
+    fencing?.ensureActiveTurn &&
     fencing.matchesPendingTurn &&
     fencing.terminatedGuard &&
     fencing.resolvedHandler &&
@@ -1409,8 +1490,7 @@ function recordRouteChecks(recorder, facts) {
 
   const surfacing = facts.errorSurfacing;
   if (
-    surfacing &&
-    surfacing.runBridgeWorkFound &&
+    surfacing?.runBridgeWorkFound &&
     !surfacing.runBridgeWorkHasCatch &&
     surfacing.handleServerRequestFound &&
     !surfacing.handleServerRequestHasCatch &&
