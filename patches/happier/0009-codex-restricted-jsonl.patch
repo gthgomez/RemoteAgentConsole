@@ -1,0 +1,231 @@
+diff --git a/apps/cli/src/backends/codex/appServer/client/codexAppServerJsonLineReader.ts b/apps/cli/src/backends/codex/appServer/client/codexAppServerJsonLineReader.ts
+index d29c56f..26e11d5 100644
+--- a/apps/cli/src/backends/codex/appServer/client/codexAppServerJsonLineReader.ts
++++ b/apps/cli/src/backends/codex/appServer/client/codexAppServerJsonLineReader.ts
+@@ -89,3 +89,226 @@ export function createCodexAppServerJsonLineReader(
+         },
+     };
+ }
++
++/**
++ * Restricted byte-oriented framing for a future owner-launched stdio transport.
++ *
++ * This is additive: the string reader above is unchanged and no consumer
++ * selects this reader. It performs transport framing only. It does not validate
++ * JSON-RPC, make provider decisions, or settle an owned process.
++ *
++ * Frames are newline-delimited. LF terminates a frame; one CR immediately
++ * before that LF is part of the terminator (CRLF). Any other CR is frame
++ * content. Empty frames are skipped. Frame payloads are decoded as strict UTF-8
++ * across chunk boundaries and delivered unmodified otherwise.
++ *
++ * `maxFrameBytes` caps the raw payload bytes of one frame, excluding the LF or
++ * CRLF terminator. It is required, must be a positive safe integer, and must not
++ * exceed the defined `codexAppServerRestrictedJsonLineMaxFrameBytes` ceiling.
++ *
++ * Frames are assembled in one reusable Uint8Array that grows amortized up to
++ * the configured cap. Accepted bytes are copied with `set` from short views, so
++ * a caller's Buffer or Uint8Array allocation is never retained and later caller
++ * mutation cannot change a pending frame. The buffer is reused, not wiped or
++ * zeroized, so stale bytes may remain; no peak-allocation or throughput bound is
++ * claimed. Pending-byte scanning stops once the remaining per-frame allowance is
++ * consumed, so an oversized chunk is rejected without scanning the rest of a
++ * large adversarial allocation.
++ *
++ * After the first failure or after `finish()`, the reader is terminal: no frame
++ * is delivered and no further failure is reported. Failures carry only a fixed
++ * reason code, never a payload, sample or captured stderr.
++ *
++ * The reader is non-reentrant. The owner must serialize `push` and `finish` calls
++ * and must not call back into the reader from a callback. A throw from `onLine`
++ * is not caught: the owner must treat it as terminal and stop using the reader.
++ * That wiring contract is not enforced or qualified here.
++ */
++export type CodexAppServerRestrictedJsonLineFailureReason =
++    | 'frame_too_large'
++    | 'invalid_utf8'
++    | 'truncated_frame';
++
++export type CodexAppServerRestrictedJsonLineFailure = Readonly<{
++    reason: CodexAppServerRestrictedJsonLineFailureReason;
++}>;
++
++export type CodexAppServerRestrictedJsonLineReaderOptions = Readonly<{
++    maxFrameBytes: number;
++    onFailure?: (failure: CodexAppServerRestrictedJsonLineFailure) => void;
++}>;
++
++export type CodexAppServerRestrictedJsonLineFinishStatus = 'clean' | 'truncated' | 'failed';
++
++/** Defined ceiling for the configured per-frame byte cap (64 MiB). */
++export const codexAppServerRestrictedJsonLineMaxFrameBytes = 64 * 1024 * 1024;
++
++const restrictedLineFeedByte = 0x0a;
++const restrictedCarriageReturnByte = 0x0d;
++const restrictedInitialBufferBytes = 4096;
++
++export function createCodexAppServerRestrictedJsonLineReader(
++    onLine: JsonLineHandler,
++    options: CodexAppServerRestrictedJsonLineReaderOptions,
++): Readonly<{
++    push: (chunk: Uint8Array) => void;
++    finish: () => CodexAppServerRestrictedJsonLineFinishStatus;
++}> {
++    if (options === null || typeof options !== 'object') {
++        throw new TypeError('codex restricted line reader options are required');
++    }
++    const maxFrameBytes = options.maxFrameBytes;
++    if (typeof maxFrameBytes !== 'number' || !Number.isSafeInteger(maxFrameBytes) || maxFrameBytes <= 0) {
++        throw new RangeError('codex restricted line reader maxFrameBytes must be a positive safe integer');
++    }
++    if (maxFrameBytes > codexAppServerRestrictedJsonLineMaxFrameBytes) {
++        throw new RangeError(
++            'codex restricted line reader maxFrameBytes exceeds codexAppServerRestrictedJsonLineMaxFrameBytes',
++        );
++    }
++    if (options.onFailure !== undefined && typeof options.onFailure !== 'function') {
++        throw new TypeError('codex restricted line reader onFailure must be a function');
++    }
++
++    // The cap plus one trailing byte leaves room for a CR that may belong to CRLF.
++    const frameCeiling = maxFrameBytes + 1;
++    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
++    let capacity = Math.min(frameCeiling, restrictedInitialBufferBytes);
++    let buffer = new Uint8Array(capacity);
++    let bufferedBytes = 0;
++    let terminalStatus: CodexAppServerRestrictedJsonLineFinishStatus | null = null;
++
++    const release = (): void => {
++        bufferedBytes = 0;
++    };
++
++    const fail = (reason: CodexAppServerRestrictedJsonLineFailureReason): void => {
++        if (terminalStatus !== null) return;
++        release();
++        terminalStatus = reason === 'truncated_frame' ? 'truncated' : 'failed';
++        options.onFailure?.({ reason });
++    };
++
++    const ensureCapacity = (needed: number): boolean => {
++        if (needed <= capacity) return true;
++        let next = capacity * 2;
++        if (next < needed) next = needed;
++        if (next > frameCeiling) next = frameCeiling;
++        if (next < needed) {
++            fail('frame_too_large');
++            return false;
++        }
++        const grown = new Uint8Array(next);
++        grown.set(buffer.subarray(0, bufferedBytes));
++        buffer = grown;
++        capacity = next;
++        return true;
++    };
++
++    const appendSegment = (chunk: Uint8Array, start: number, end: number): boolean => {
++        const length = end - start;
++        if (length === 0) return true;
++        const nextBytes = bufferedBytes + length;
++        if (nextBytes > frameCeiling) {
++            fail('frame_too_large');
++            return false;
++        }
++        if (nextBytes === frameCeiling && chunk[end - 1] !== restrictedCarriageReturnByte) {
++            fail('frame_too_large');
++            return false;
++        }
++        if (!ensureCapacity(nextBytes)) return false;
++        // Copy from a short view; Buffer#slice would return a view into the caller.
++        buffer.set(chunk.subarray(start, end), bufferedBytes);
++        bufferedBytes = nextBytes;
++        return true;
++    };
++
++    const finishFrame = (): void => {
++        if (terminalStatus !== null) return;
++        let contentBytes = bufferedBytes;
++        if (contentBytes > 0 && buffer[contentBytes - 1] === restrictedCarriageReturnByte) {
++            contentBytes -= 1;
++        }
++        if (contentBytes > maxFrameBytes) {
++            fail('frame_too_large');
++            return;
++        }
++        if (contentBytes === 0) {
++            release();
++            return;
++        }
++        let text: string;
++        try {
++            text = decoder.decode(buffer.subarray(0, contentBytes));
++        } catch {
++            fail('invalid_utf8');
++            return;
++        }
++        release();
++        onLine(text);
++    };
++
++    return {
++        push: (chunk: Uint8Array): void => {
++            if (!(chunk instanceof Uint8Array)) {
++                throw new TypeError('codex restricted line reader chunk must be a Uint8Array');
++            }
++            if (terminalStatus !== null) return;
++            let startIndex = 0;
++            while (startIndex < chunk.length) {
++                const allowance = frameCeiling - bufferedBytes;
++                if (allowance === 0) {
++                    if (chunk[startIndex] === restrictedLineFeedByte) {
++                        finishFrame();
++                        if (terminalStatus !== null) return;
++                        startIndex += 1;
++                        continue;
++                    }
++                    fail('frame_too_large');
++                    return;
++                }
++                const windowEnd = Math.min(chunk.length, startIndex + allowance);
++                let newlineIndex = -1;
++                for (let index = startIndex; index < windowEnd; index += 1) {
++                    if (chunk[index] === restrictedLineFeedByte) {
++                        newlineIndex = index;
++                        break;
++                    }
++                }
++                if (newlineIndex !== -1) {
++                    if (!appendSegment(chunk, startIndex, newlineIndex)) return;
++                    finishFrame();
++                    if (terminalStatus !== null) return;
++                    startIndex = newlineIndex + 1;
++                    continue;
++                }
++                if (!appendSegment(chunk, startIndex, windowEnd)) return;
++                if (windowEnd < chunk.length) {
++                    // The full allowance is pending; only a CR before LF is still valid.
++                    if (
++                        chunk[windowEnd] === restrictedLineFeedByte
++                        && buffer[bufferedBytes - 1] === restrictedCarriageReturnByte
++                    ) {
++                        finishFrame();
++                        if (terminalStatus !== null) return;
++                        startIndex = windowEnd + 1;
++                        continue;
++                    }
++                    fail('frame_too_large');
++                    return;
++                }
++                return;
++            }
++        },
++        finish: (): CodexAppServerRestrictedJsonLineFinishStatus => {
++            if (terminalStatus !== null) return terminalStatus;
++            if (bufferedBytes > 0) {
++                fail('truncated_frame');
++                return 'truncated';
++            }
++            terminalStatus = 'clean';
++            return 'clean';
++        },
++    };
++}
