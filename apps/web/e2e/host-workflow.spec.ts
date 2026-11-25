@@ -20,7 +20,7 @@ test("real host streams the fake ACP workflow and replays it after reload", asyn
   await expect(page.getByText("Turn completed")).toBeVisible();
 
   await page.reload();
-  await expect(page.getByText("inspect the first request")).toBeVisible();
+  await expect(page.getByText("inspect the first request", { exact: true })).toBeVisible();
   await expect(page.getByText("Fake response to: inspect the first request")).toBeVisible();
   await expect(page.getByText("Turn completed")).toBeVisible();
 
