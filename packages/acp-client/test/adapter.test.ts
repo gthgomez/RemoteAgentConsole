@@ -1,15 +1,16 @@
+import { fileURLToPath } from "node:url";
 import type { RuntimeEvent } from "@remote-agent-console/runtime-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAcpRuntimeAdapter } from "../src/index.js";
 
-const fakeAgent = new URL("../../testkit/src/fake-agent.js", import.meta.url);
+const fakeAgent = fileURLToPath(new URL("../../testkit/src/fake-agent.js", import.meta.url));
 const sessions: Array<{ close(): Promise<void> }> = [];
 
 afterEach(async () => {
   await Promise.all(sessions.splice(0).map((session) => session.close()));
 });
 
-function adapter(script = fakeAgent.pathname, extraArgs: string[] = []) {
+function adapter(script = fakeAgent, extraArgs: string[] = []) {
   return createAcpRuntimeAdapter({
     id: "fake",
     displayName: "Fake ACP",
@@ -133,7 +134,7 @@ describe("ACP runtime adapter", () => {
 
   it("sanitizes local paths in ACP protocol errors before emitting session.error", async () => {
     const connection = await adapter(
-      new URL("./protocol-error-agent.js", import.meta.url).pathname,
+      fileURLToPath(new URL("./protocol-error-agent.js", import.meta.url)),
     ).connect({ projectId: "demo" });
     const session = await connection.createSession();
     sessions.push(session);
@@ -152,7 +153,7 @@ describe("ACP runtime adapter", () => {
 
   it("sanitizes local paths in ACP session creation failures", async () => {
     const connection = await adapter(
-      new URL("./protocol-error-agent.js", import.meta.url).pathname,
+      fileURLToPath(new URL("./protocol-error-agent.js", import.meta.url)),
       ["session-new"],
     ).connect({ projectId: "demo" });
     try {
@@ -166,11 +167,11 @@ describe("ACP runtime adapter", () => {
   });
 
   it("reports a child crash after session creation", async () => {
-    const connection = await adapter(new URL("./crash-agent.js", import.meta.url).pathname).connect(
-      {
-        projectId: "demo",
-      },
-    );
+    const connection = await adapter(
+      fileURLToPath(new URL("./crash-agent.js", import.meta.url)),
+    ).connect({
+      projectId: "demo",
+    });
     expect(connection.capabilities.sessions).toEqual({ create: true, resume: true, list: true });
     const session = await connection.createSession();
     sessions.push(session);

@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 2,
+  "suite": "codex-native-app-server-offline-conformance",
+  "target": "ROG-14",
+  "description": "Repeatable native/offline contract check for the Windows Codex app-server, pinned to the stable (non-experimental) JSON-RPC surface used by the maintained controller.",
+  "labels": ["native", "offline", "not-integrated", "not-physical"],
+  "scope": "Native Codex app-server over stdio on the target Windows host. No turn is sent, no model or provider is contacted, no relay or shared app-server is started, and no ACP or controller integration is exercised.",
+  "expectedCliVersion": "codex-cli 0.171.0",
+  "expectedVersionToken": "0.171.0",
+  "expectedPlatformFamily": "windows",
+  "expectedPlatformOs": "windows",
+  "platformTargets": {
+    "win32-x64": "x86_64-pc-windows-msvc",
+    "win32-arm64": "aarch64-pc-windows-msvc"
+  },
+  "pinnedBinaryDigests": {
+    "x86_64-pc-windows-msvc": "cefea4ffee1fff04983a99c0dda99944d8b380e891e740a28b32f4b815a6e0b7"
+  },
+  "requiredClientMethods": [
+    "initialize",
+    "thread/start",
+    "thread/inject_items",
+    "thread/list",
+    "thread/read",
+    "thread/resume",
+    "thread/delete",
+    "turn/start",
+    "turn/interrupt"
+  ],
+  "requiredClientNotifications": ["initialized"],
+  "requiredServerRequests": [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/tool/requestUserInput",
+    "item/permissions/requestApproval"
+  ],
+  "requiredServerNotifications": [
+    "thread/started",
+    "turn/started",
+    "turn/completed",
+    "item/started",
+    "item/completed",
+    "item/agentMessage/delta",
+    "item/commandExecution/outputDelta",
+    "serverRequest/resolved"
+  ],
+  "appServerArgs": [
+    "app-server",
+    "--strict-config",
+    "--disable",
+    "plugins",
+    "--disable",
+    "apps",
+    "--disable",
+    "remote_plugin"
+  ],
+  "appServerArgsReason": "Disabling the plugin, app and remote-plugin surfaces keeps startup local: no marketplace clone, no app catalogue fetch and no remote-control daemon. The lifecycle methods under test are unaffected.",
+  "threadStartParams": {
+    "approvalPolicy": "never",
+    "sandbox": "read-only",
+    "ephemeral": false
+  },
+  "requiredApprovalPolicy": "never",
+  "requiredSandbox": {
+    "type": "readOnly",
+    "networkAccess": false
+  },
+  "baselineManifest": "schema-snapshot.sha256.json",
+  "trustModel": {
+    "binaryLocation": "owner-trusted fixed install location resolved from an absolute PATH entry (npm global shim -> vendored platform package)",
+    "digestBinding": "the resolved vendored file is hashed and compared to the pinned digest before any launch",
+    "scope": "This is not a general trust boundary and not a configurable seam. A different path containing the same bytes is accepted; different bytes are rejected. Installing, relocating or replacing the CLI remains an owner-managed action."
+  },
+  "limits": {
+    "requestTimeoutMs": 60000,
+    "processTimeoutMs": 300000,
+    "exitTimeoutMs": 10000,
+    "killGraceMs": 3000,
+    "frameLimitBytes": 1048576,
+    "maxFrames": 2000,
+    "maxNotifications": 500,
+    "stderrByteLimit": 65536,
+    "versionTimeoutMs": 15000,
+    "versionOutputBytes": 16384,
+    "schemaTimeoutMs": 180000,
+    "schemaOutputBytes": 16384,
+    "grepOutputBytes": 524288
+  },
+  "isolation": {
+    "codexHome": "owned temp directory, empty before start",
+    "project": "owned temp directory containing only a qualification marker file",
+    "forbiddenHomeFiles": ["auth.json", "config.toml"],
+    "forbiddenHomeDirectories": [".tmp/plugins"]
+  }
+}

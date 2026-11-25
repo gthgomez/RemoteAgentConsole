@@ -16,7 +16,12 @@
     "lint": "biome lint .",
     "typecheck": "pnpm --recursive --if-present typecheck",
     "test": "pnpm --recursive --if-present test",
-    "verify": "pnpm check:workspace && biome check . && pnpm typecheck && pnpm test"
+    "verify": "pnpm check:workspace && biome check . && pnpm typecheck && pnpm test",
+    "composition:verify": "node distribution/build-composition.mjs verify",
+    "composition:stage": "node distribution/build-composition.mjs stage",
+    "composition:build-reference": "node distribution/build-composition.mjs build-reference",
+    "composition:fixtures": "node qualification/run-fixtures.mjs",
+    "test:history": "node --test qualification/migration.test.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",

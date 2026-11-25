@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "happierBase": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+  "scope": "Restricted-controller development scaffold",
+  "activation": {
+    "modeEnvironmentKey": "HAPPIER_RAC_RESTRICTED_DEPLOYMENT",
+    "policyFileEnvironmentKey": "HAPPIER_RAC_POLICY_FILE"
+  },
+  "ingresses": [
+    {
+      "path": "apps/cli/src/api/apiMachine.ts",
+      "owner": "machine RPC",
+      "admittedMethods": []
+    },
+    {
+      "path": "apps/cli/src/api/session/sessionClient.ts",
+      "owner": "session RPC",
+      "admittedMethods": ["session.workState.get"],
+      "requires": [
+        "local method allowlist",
+        "unchanged protected policy file",
+        "current registered directory identity",
+        "empty request object"
+      ]
+    },
+    {
+      "path": "apps/cli/src/api/rpc/RpcHandlerManager.ts",
+      "owner": "decrypted and in-process RPC execution",
+      "default": "deny",
+      "delegatesTo": "apps/cli/src/security/restrictedDeployment/authorizeRpc.ts"
+    },
+    {
+      "path": "apps/cli/src/daemon/startDaemon.ts",
+      "owner": "canonical daemon spawn",
+      "admittedProfiles": []
+    }
+  ],
+  "pendingQualification": [
+    "Protected Windows configuration and filesystem identity validation",
+    "Locally provisioned launch profiles and resume, fork, transition and recovery admission",
+    "Revocable per-device relay authority",
+    "Scoped file and change readers",
+    "Native provider controls and approval routing"
+  ]
+}

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>RemoteAgentConsole.WindowsLaunch.Tests</AssemblyName>
+    <RootNamespace>RemoteAgentConsole.WindowsLaunch.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <StartupObject>RemoteAgentConsole.WindowsLaunch.Tests.TestRunner</StartupObject>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RemoteAgentConsole.WindowsLaunch\RemoteAgentConsole.WindowsLaunch.csproj" />
+    <ProjectReference Include="..\RemoteAgentConsole.WindowsLaunch.EnvironmentProbe\RemoteAgentConsole.WindowsLaunch.EnvironmentProbe.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\RemoteAgentConsole.WindowsLaunch.StdioProbe\RemoteAgentConsole.WindowsLaunch.StdioProbe.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

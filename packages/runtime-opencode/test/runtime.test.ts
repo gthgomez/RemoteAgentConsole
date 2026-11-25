@@ -1,17 +1,22 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createOpenCodeRuntimeAdapter, discoverOpenCode } from "../src/index.js";
 
-const fakeAgent = new URL("../../testkit/src/fake-agent.js", import.meta.url).pathname;
+const fakeAgent = fileURLToPath(new URL("../../testkit/src/fake-agent.js", import.meta.url));
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+    temporaryDirectories.splice(0).map((directory) =>
+      // The fake CLI's child inherits the temp project directory as its cwd
+      // and can outlive the killed CLI briefly on Windows, where that cwd
+      // handle blocks removal. Bounded retries wait for release; a real
+      // orphan still makes rm throw after the bound.
+      rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+    ),
   );
 });
 

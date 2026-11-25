@@ -1,0 +1,283 @@
+diff --git a/apps/cli/src/cli/commands/relay.host.localServerBinaryVersion.test.ts b/apps/cli/src/cli/commands/relay.host.localServerBinaryVersion.test.ts
+index aa8363d8..f615e3bf 100644
+--- a/apps/cli/src/cli/commands/relay.host.localServerBinaryVersion.test.ts
++++ b/apps/cli/src/cli/commands/relay.host.localServerBinaryVersion.test.ts
+@@ -11,6 +11,7 @@ let mockedPreparedPayloadRoot = '';
+ let mockedPreparedVersionId = 'preview-release-0.2.1';
+ let resolvedLocalInstallVersion: string | null = null;
+ let receivedSelfHostRelayBinaryOverride: string | null = null;
++let receivedLocalPersistentPolicy: boolean | undefined = undefined;
+ 
+ vi.mock('@happier-dev/cli-common/firstPartyRuntime', async (importOriginal) => {
+     const actual = await importOriginal<any>();
+@@ -41,6 +42,7 @@ vi.mock('@happier-dev/cli-common/relayHost', async (importOriginal) => {
+             }),
+             installOrUpdate: async (params: any) => {
+                 receivedSelfHostRelayBinaryOverride = params.selfHostRelayBinaryOverride ?? null;
++                receivedLocalPersistentPolicy = deps.localInstallPolicy?.persistent;
+                 resolvedLocalInstallVersion = deps.resolveLocalInstallVersion
+                     ? await deps.resolveLocalInstallVersion({
+                         channel: 'preview',
+@@ -68,6 +70,7 @@ describe('happier relay host install local server-binary version tracking', () =
+         vi.resetModules();
+         resolvedLocalInstallVersion = null;
+         receivedSelfHostRelayBinaryOverride = null;
++        receivedLocalPersistentPolicy = undefined;
+         envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+         home = await createTempDir('happier-relay-local-version-home-');
+         preparedPayloadRoot = await createTempDir('happier-relay-local-version-prepared-');
+@@ -190,4 +193,25 @@ describe('happier relay host install local server-binary version tracking', () =
+             process.exitCode = prevExitCode;
+         }
+     });
++
++    it('forwards an explicit on-demand choice to the local lifecycle policy', async () => {
++        const output = captureConsoleLogAndMuteStdout();
++        const prevExitCode = process.exitCode;
++        process.exitCode = undefined;
++
++        try {
++            const { commandRegistry } = await import('../commandRegistry');
++            await commandRegistry.relay({
++                args: ['relay', 'host', 'install', '--autostart', 'on-demand', '--json'],
++                rawArgv: ['node', 'hprev', 'relay', 'host', 'install', '--autostart', 'on-demand', '--json'],
++                terminalRuntime: null,
++            });
++
++            expect(receivedLocalPersistentPolicy).toBe(false);
++            expect(process.exitCode).toBe(0);
++        } finally {
++            output.restore();
++            process.exitCode = prevExitCode;
++        }
++    });
+ });
+diff --git a/apps/cli/src/cli/commands/relay/host.backgroundConsole.test.ts b/apps/cli/src/cli/commands/relay/host.backgroundConsole.test.ts
+index fcaae8e7..74f10b25 100644
+--- a/apps/cli/src/cli/commands/relay/host.backgroundConsole.test.ts
++++ b/apps/cli/src/cli/commands/relay/host.backgroundConsole.test.ts
+@@ -16,4 +16,18 @@ describe('relay host background SSH', () => {
+       windowsHide: true, encoding: 'utf8',
+     }));
+   });
++
++  it('rejects the local on-demand choice for SSH before spawning a process', async () => {
++    vi.mocked(spawnSync).mockClear();
++    await expect(runRelayHostSubcommand(['install', '--ssh', 'user@example.invalid', '--autostart', 'on-demand']))
++      .rejects.toThrow('--autostart is a local relay-host choice');
++    expect(spawnSync).not.toHaveBeenCalled();
++  });
++
++  it('rejects on-demand registration for system mode', async () => {
++    vi.mocked(spawnSync).mockClear();
++    await expect(runRelayHostSubcommand(['install', '--mode', 'system', '--autostart', 'on-demand']))
++      .rejects.toThrow('supported only for --mode user');
++    expect(spawnSync).not.toHaveBeenCalled();
++  });
+ });
+diff --git a/apps/cli/src/cli/commands/relay/host.ts b/apps/cli/src/cli/commands/relay/host.ts
+index 5d105f1c..b4cd1800 100644
+--- a/apps/cli/src/cli/commands/relay/host.ts
++++ b/apps/cli/src/cli/commands/relay/host.ts
+@@ -502,6 +502,7 @@ function createMemoizedResolveRemoteReleaseTarget(runner: ReturnType<typeof buil
+ }
+ 
+ function createLocalRelayHostEngine(params: Readonly<{
++  persistent?: boolean;
+   resolveLocalInstallVersion?: (params: Readonly<{
+     channel: 'stable' | 'preview' | 'publicdev';
+     mode: 'user' | 'system';
+@@ -512,6 +513,7 @@ function createLocalRelayHostEngine(params: Readonly<{
+     installRemoteComponent: async () => {
+       throw new Error('Remote component installation is not available for local relay host commands.');
+     },
++    ...(params.persistent === false ? { localInstallPolicy: { persistent: false } } : {}),
+     resolveRemoteReleaseTarget: async () => {
+       throw new Error('Remote target resolution is not available for local relay host commands.');
+     },
+@@ -541,7 +543,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
+   const json = wantsJson(args);
+   const op = String(args[0] ?? '').trim();
+   if (!op) {
+-    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--server-binary <path>] [--lan | --expose | --host <ip>] [--preserve-active-server] [--yes] [--json]');
++    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--autostart at-login|on-demand] [--env KEY=VALUE]... [--server-binary <path>] [--lan | --expose | --host <ip>] [--preserve-active-server] [--yes] [--json]');
+   }
+ 
+   let rest = args.slice(1);
+@@ -549,6 +551,8 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
+   rest = channelFlag.rest;
+   const modeFlag = takeFlagValue(rest, '--mode');
+   rest = modeFlag.rest;
++  const autostartFlag = takeFlagValue(rest, '--autostart');
++  rest = autostartFlag.rest;
+   const sshFlag = takeFlagValue(rest, '--ssh');
+   rest = sshFlag.rest;
+   const envFlag = takeRepeatedFlagValues(rest, '--env');
+@@ -621,6 +625,20 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
+     throw createInvalidArgumentsError('Use --server-binary instead of --self-host-server-binary for relay host install over SSH.');
+   }
+ 
++  const autostart = autostartFlag.value ?? 'at-login';
++  if (autostart !== 'at-login' && autostart !== 'on-demand') {
++    throw createInvalidArgumentsError('--autostart must be either at-login or on-demand.');
++  }
++  if (autostartFlag.value !== null && op !== 'install') {
++    throw createInvalidArgumentsError('--autostart can only be used with relay host install.');
++  }
++  if (autostartFlag.value !== null && ssh) {
++    throw createInvalidArgumentsError('--autostart is a local relay-host choice and cannot be used with --ssh.');
++  }
++  if (autostart === 'on-demand' && mode !== 'user') {
++    throw createInvalidArgumentsError('--autostart on-demand is supported only for --mode user.');
++  }
++
+   const taskParams = resolveRelayRuntimeTaskParams({ channel, mode, ssh });
+   const env = envFlag.values.length > 0 ? parseEnvOverrides(envFlag.values) : null;
+   const selfHostRelayBinaryOverride = String(serverBinaryFlag.value ?? selfHostServerBinaryFlag.value ?? '').trim() || null;
+@@ -833,6 +851,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
+             }
+ 
+             const engine = createLocalRelayHostEngine({
++              persistent: autostart !== 'on-demand',
+               resolveLocalInstallVersion: async ({ serverBinaryPath: candidate }) => {
+                 if (candidate === serverBinaryPath) {
+                   return localServerPayloadOverride?.versionId || prepared.versionId || null;
+@@ -859,6 +878,9 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
+ 
+     if (!json) {
+       console.log(chalk.gray(`  ${payload.relayUrl}`));
++      if (autostart === 'on-demand') {
++        console.log(chalk.gray('  Startup: on-demand (no sign-in trigger)'));
++      }
+       if (localRelayDataDir && !relayDataDirExistedBeforeInstall) {
+         console.log('');
+         console.log(`  ${warn('This relay generated a master secret in')}`);
+diff --git a/packages/cli-common/src/firstPartyRuntime/relayRuntimeInstall.ts b/packages/cli-common/src/firstPartyRuntime/relayRuntimeInstall.ts
+index e757fe1f..bfa7ee44 100644
+--- a/packages/cli-common/src/firstPartyRuntime/relayRuntimeInstall.ts
++++ b/packages/cli-common/src/firstPartyRuntime/relayRuntimeInstall.ts
+@@ -696,6 +696,7 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
+     legacyInstallRoot?: string;
+     runServiceCommands?: boolean;
+     skipHealthCheck?: boolean;
++    persistent?: boolean;
+     runMigrationCommand?: (params: Readonly<{
+         command: string;
+         args: readonly string[];
+@@ -953,7 +954,7 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
+             label: serviceSpec.label,
+             definitionPath: definition.path,
+             definitionContents: definition.contents,
+-            persistent: true,
++            persistent: params.persistent !== false,
+         });
+         candidateServiceActivationAttempted = params.runServiceCommands !== false;
+         await applyServicePlan(plan, {
+diff --git a/packages/cli-common/src/relayHost/relayHostEngine.localPersistence.test.ts b/packages/cli-common/src/relayHost/relayHostEngine.localPersistence.test.ts
+new file mode 100644
+index 00000000..ba68cf3e
+--- /dev/null
++++ b/packages/cli-common/src/relayHost/relayHostEngine.localPersistence.test.ts
+@@ -0,0 +1,82 @@
++import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++
++import { afterEach, describe, expect, it, vi } from 'vitest';
++
++describe('RelayHostEngine local startup persistence', () => {
++  const originalPlatform = process.platform;
++
++  afterEach(() => {
++    Object.defineProperty(process, 'platform', { value: originalPlatform });
++    vi.resetModules();
++    vi.doUnmock('node:os');
++    vi.doUnmock('node:child_process');
++    vi.doUnmock('../service/index.js');
++  });
++
++  it('passes on-demand installation through the maintained service plan without an enable action', async () => {
++    const homeDir = await mkdtemp(join(tmpdir(), 'relay-host-on-demand-'));
++    const payloadRoot = join(homeDir, 'payload');
++    const plans: Array<{ commands: readonly { cmd: string; args: readonly string[] }[] }> = [];
++    try {
++      await mkdir(join(payloadRoot, 'bin', 'prisma', 'sqlite', 'migrations'), { recursive: true });
++      await writeFile(join(payloadRoot, 'bin', 'happier-server'), '#!/bin/sh\nexit 0\n', 'utf8');
++
++      Object.defineProperty(process, 'platform', { value: 'linux' });
++      vi.doMock('node:os', async () => {
++        const actual = await vi.importActual<typeof import('node:os')>('node:os');
++        return { ...actual, homedir: () => homeDir };
++      });
++      vi.doMock('node:child_process', async () => {
++        const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
++        return {
++          ...actual,
++          spawnSync: (cmd: string, args?: readonly string[]) => {
++            if (cmd === 'systemctl' && Array.isArray(args) && args.includes('show')) {
++              return { status: 0, stdout: 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nUnitFileState=\n', stderr: '' };
++            }
++            return { status: 0, stdout: '', stderr: '' };
++          },
++        };
++      });
++      vi.doMock('../service/index.js', async (importOriginal) => {
++        const actual = await importOriginal<typeof import('../service/index.js')>();
++        return {
++          ...actual,
++          applyServicePlan: async (plan: { commands: readonly { cmd: string; args: readonly string[] }[] }) => {
++            plans.push(plan);
++          },
++        };
++      });
++
++      const { createRelayHostEngine } = await import('./relayHostEngine.js');
++      const engine = createRelayHostEngine({
++        localInstallPolicy: {
++          persistent: false,
++          runServiceCommands: false,
++          skipHealthCheck: true,
++        },
++        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
++        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
++        copyLocalDirectoryToRemote: async () => {},
++        installRemoteComponent: async () => ({ binaryPath: '', versionId: 'fixture' }),
++      });
++
++      await engine.installOrUpdate({
++        target: { kind: 'local' },
++        channel: 'stable',
++        mode: 'user',
++        env: { RUN_MIGRATIONS: '0' },
++        selfHostRelayBinaryOverride: join(payloadRoot, 'bin', 'happier-server'),
++      });
++
++      const installPlan = plans.find((plan) => plan.commands.some((command) => command.args.includes('restart')));
++      expect(installPlan).toBeDefined();
++      expect(installPlan?.commands.some((command) => command.cmd === 'systemctl' && command.args.includes('enable'))).toBe(false);
++      expect(installPlan?.commands.some((command) => command.cmd === 'systemctl' && command.args.includes('restart'))).toBe(true);
++    } finally {
++      await rm(homeDir, { recursive: true, force: true });
++    }
++  });
++});
+diff --git a/packages/cli-common/src/relayHost/relayHostEngine.ts b/packages/cli-common/src/relayHost/relayHostEngine.ts
+index 0bc515c8..ca05f5af 100644
+--- a/packages/cli-common/src/relayHost/relayHostEngine.ts
++++ b/packages/cli-common/src/relayHost/relayHostEngine.ts
+@@ -88,6 +88,7 @@ export type RelayHostEngineDeps = Readonly<{
+   localInstallPolicy?: Readonly<{
+     runServiceCommands?: boolean;
+     skipHealthCheck?: boolean;
++    persistent?: boolean;
+   }>;
+   resolveLocalInstallVersion?: (params: Readonly<{
+     channel: PublicReleaseRingId;
+@@ -1607,6 +1608,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
+       version,
+       runServiceCommands: policy.runServiceCommands !== false,
+       skipHealthCheck: policy.skipHealthCheck === true,
++      persistent: policy.persistent !== false,
+     });
+ 
+     return {

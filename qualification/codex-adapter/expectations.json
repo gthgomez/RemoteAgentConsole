@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "suite": "codex-appserver-adapter-offline-qualification",
+  "target": "C07/RAC maintained Codex adapter",
+  "labels": ["offline", "source-bound", "not-integrated", "not-physical"],
+  "scope": "Offline, source-bound qualification of the selected Happier Codex app-server adapter surface for the pinned native Codex 0.171.0 stable schema. No prompt, model, provider, auth, database, listener or live adapter process is started.",
+  "happier": {
+    "commit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+    "tree": "911bdc3c673608490b932bd939166d88f198066a",
+    "candidateTree": "c62fcb80464a0b7161efb4c09bdcbd8d9506bea4",
+    "referenceArchive": {
+      "topDir": "happier-v0.2.21-windows-x64",
+      "sha256": "4ee44f2b852b6b25ca977ed6d035859dc30d38f73d21ed0f17bbc4d364e2462a",
+      "dependencyMembers": ["node_modules/zod", "node_modules/@happier-dev/protocol"]
+    },
+    "sourceFiles": {
+      "packages/agents/src/manifest.ts": "0fe5accd9c4bbe7bbe72dee24cc67a1a098eef85",
+      "apps/cli/src/backends/codex/appServer/runtime.ts": "092a467d274fd36c3b76b81633bcf6f5b1376bd0",
+      "apps/cli/src/backends/codex/appServer/codexAppServerHistoryBoundary.ts": "269c33370d352baf1c8d3c1127f19d1ffab79819"
+    }
+  },
+  "patch": {
+    "path": "patches/happier/0007-codex-stable-profile.patch",
+    "sha256": "6872c372244380919374037a9453fb3bcdd05e4ffd80f7dca121aa055dab3065",
+    "expectedPatchedManifestBlob": "b2fe7f6dfa405b111c051c428ed906203d0ee566",
+    "touchesOnly": ["packages/agents/src/manifest.ts"]
+  },
+  "native": {
+    "cliVersion": "codex-cli 0.171.0",
+    "binarySha256": "cefea4ffee1fff04983a99c0dda99944d8b380e891e740a28b32f4b815a6e0b7",
+    "schemaManifestSha256": "29c34971dff6d5ee23b784d413fb53103bbf06c735d8ec50ddacdbb05d73bbe9",
+    "schemaFileCount": 331,
+    "receiptContentSha256": "f5f784c2a033c4b562cb4c7786f88410dad9779b840dab4007806fd95025a926",
+    "receiptLabel": "native-only-independent-20261124.json",
+    "aggregateHashes": {
+      "codex_app_server_protocol.schemas.json": "6207620bfd8e98a03a36330ed5e416b551086b91202f93a3759a937065bf2ca7",
+      "codex_app_server_protocol.v2.schemas.json": "d5d9aaf55c71f99f9822b33f62dfab506d76b3f3c8751e6e6a056bf9a9d396d9"
+    }
+  },
+  "capability": {
+    "agentId": "codex",
+    "capability": "sessionRollback.conversation",
+    "modes": ["appServer", "acp", "mcp"],
+    "otherCapabilities": [
+      "sessionFork.conversation",
+      "sessionFork.fromMessage",
+      "sessionListing",
+      "usageLimitRecovery.checkNow"
+    ],
+    "unpatchedAppServer": "supported",
+    "patchedAppServer": "unsupported"
+  },
+  "classifications": {
+    "thread/rollback": {
+      "status": "unsupported",
+      "shape": "thread/rollback { threadId, numTurns }",
+      "note": "Absent from the pinned stable ClientRequest. Exactly one request shape is classified; no arbitrary fallback or history rollback is qualified."
+    },
+    "thread/revert": {
+      "status": "not-qualified",
+      "shape": "thread/revert { threadId, beforeTurnId }",
+      "note": "Present in the stable schema and used by Happier for history rollback, but intentionally outside the first qualification."
+    },
+    "turn/interrupted": {
+      "status": "optional-compatibility",
+      "note": "Absent from the pinned stable ServerNotification list. Treated as an optional terminal notification alongside turn/completed; not required and not evidence that cancellation is broken."
+    },
+    "turn/completed": {
+      "status": "stable",
+      "note": "Stable terminal notification; status may be completed, interrupted, failed or inProgress."
+    },
+    "cancellation": {
+      "status": "shape-verified-only",
+      "note": "Request shape, terminal-gated settlement and absence of optimistic settlement are verified statically; live cancellation is not qualified."
+    }
+  },
+  "limits": {
+    "gitTimeoutMs": 120000,
+    "maxSourceBytes": 33554432,
+    "maxArchiveBytes": 268435456,
+    "extractedFunctionTimeoutMs": 30000
+  }
+}

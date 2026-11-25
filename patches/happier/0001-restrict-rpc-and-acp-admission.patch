@@ -1,0 +1,752 @@
+diff --git a/apps/cli/src/agent/acp/AcpBackend.ts b/apps/cli/src/agent/acp/AcpBackend.ts
+index 32b05891..73a043ed 100644
+--- a/apps/cli/src/agent/acp/AcpBackend.ts
++++ b/apps/cli/src/agent/acp/AcpBackend.ts
+@@ -41,6 +41,7 @@ import type {
+   AgentPromptPayload,
+ } from '../core';
+ import { logger } from '@/ui/logger';
++import { isRestrictedDeploymentConfigured } from '@/security/restrictedDeployment/policy';
+ import { delay } from '@/utils/time';
+ import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
+ import { createAcpStderrLogSummarizer } from './diagnostics/summarizeAcpStderrForLogs';
+@@ -910,6 +911,7 @@ function readAcpListedSessionUpdatedAtMs(value: unknown): number | null {
+  * ACP backend using the official @agentclientprotocol/sdk
+  */
+ export class AcpBackend implements AgentBackend {
++  private readonly requireInteractivePermission = isRestrictedDeploymentConfigured();
+   private listeners: AgentMessageHandler[] = [];
+   private readonly providerTurnEventListeners = new Set<() => void>();
+   private process: ChildProcess | null = null;
+@@ -1756,7 +1758,12 @@ export class AcpBackend implements AgentBackend {
+         const extendedParams = params as ExtendedRequestPermissionRequest;
+         const requestSessionId = typeof params.sessionId === 'string' ? params.sessionId : (this.acpSessionId ?? '');
+         const toolCall = extendedParams.toolCall;
+-        const options = extendedParams.options || [];
++        const suppliedOptions = Array.isArray(extendedParams.options) ? extendedParams.options : [];
++        const strictPermission = this.requireInteractivePermission;
++        const options = strictPermission
++          ? suppliedOptions.filter(option => (option?.kind === 'allow_once' || option?.kind === 'reject_once')
++            && typeof option.optionId === 'string' && option.optionId.trim().length > 0)
++          : suppliedOptions;
+         // ACP spec: toolCall.toolCallId is the correlation ID. Fall back to legacy fields when needed.
+         const toolCallId =
+           (typeof toolCall?.toolCallId === 'string' && toolCall.toolCallId.trim().length > 0)
+@@ -1764,7 +1771,7 @@ export class AcpBackend implements AgentBackend {
+             : (typeof toolCall?.id === 'string' && toolCall.id.trim().length > 0)
+               ? toolCall.id
+               : randomUUID();
+-        const permissionId = toolCallId;
++        const permissionId = strictPermission ? randomUUID() : toolCallId;
+         if (requestSessionId === this.acpSessionId) {
+           try {
+             await this.catchUpProviderTurns(toolCallId);
+@@ -1790,6 +1797,9 @@ export class AcpBackend implements AgentBackend {
+           return { outcome: { outcome: 'cancelled' } };
+         };
+         if (!isCurrentPermissionRequest()) return withdrawPermissionRequest();
++        if (strictPermission && (!this.options.permissionHandler || options.length === 0)) {
++          return { outcome: { outcome: 'cancelled' } };
++        }
+         if (tracksForeground) {
+           this.observeProviderTurnEvent(requestSessionId);
+         }
+@@ -1821,7 +1831,9 @@ export class AcpBackend implements AgentBackend {
+         });
+ 
+         // If the agent re-prompts with the same toolCallId, reuse the previous selection when possible.
+-        const cachedOptionId = tracksForeground ? this.lastSelectedPermissionOptionIdByToolCallId.get(toolCallId) : undefined;
++        const cachedOptionId = tracksForeground && !strictPermission
++          ? this.lastSelectedPermissionOptionIdByToolCallId.get(toolCallId)
++          : undefined;
+         if (cachedOptionId && options.some((opt) => opt.optionId === cachedOptionId)) {
+           logger.debug(`[AcpBackend] Duplicate permission prompt for ${toolCallId}, reusing cached optionId=${cachedOptionId}`);
+           return { outcome: { outcome: 'selected', optionId: cachedOptionId } };
+@@ -1878,7 +1890,7 @@ export class AcpBackend implements AgentBackend {
+         }, null, 2));
+ 
+         const immediateDecision = this.options.permissionHandler?.getImmediateDecision?.(
+-          toolCallId,
++          permissionId,
+           toolName,
+           input,
+           permissionContext,
+@@ -1910,24 +1922,31 @@ export class AcpBackend implements AgentBackend {
+         if (this.options.permissionHandler) {
+           try {
+             const result = await this.options.permissionHandler.handleToolCall(
+-              toolCallId,
++              permissionId,
+               toolName,
+               input,
+               permissionContext,
+             );
+ 
+             if (!isCurrentPermissionRequest()) return withdrawPermissionRequest();
+-            const isApproved = result.decision === 'approved'
+-              || result.decision === 'approved_for_session'
+-              || result.decision === 'approved_execpolicy_amendment';
+-
+             const resolvedDecision = String(result.decision);
+-            const overrideOptionId = this.transport.pickPermissionOptionId?.(
+-              options,
+-              resolvedDecision,
+-              { toolCallId, toolName, input },
+-            );
+             const outcome = (() => {
++              if (strictPermission) {
++                const kind = resolvedDecision === 'approved'
++                  ? 'allow_once'
++                  : resolvedDecision === 'denied' || resolvedDecision === 'abort' ? 'reject_once' : null;
++                const matching = options.filter(option => option.kind === kind);
++                const [selected] = matching;
++                if (!selected || matching.length !== 1 || suppliedOptions.filter(option => option?.optionId === selected.optionId).length !== 1) {
++                  return { outcome: 'cancelled' as const };
++                }
++                return { outcome: 'selected' as const, optionId: selected.optionId };
++              }
++              const overrideOptionId = this.transport.pickPermissionOptionId?.(
++                options,
++                resolvedDecision,
++                { toolCallId, toolName, input },
++              );
+               if (overrideOptionId === null) return { outcome: 'cancelled' as const };
+               if (typeof overrideOptionId === 'string' && overrideOptionId.trim().length > 0) {
+                 if (options.some((opt) => opt.optionId === overrideOptionId)) {
+@@ -1941,7 +1960,11 @@ export class AcpBackend implements AgentBackend {
+               }
+               return pickPermissionOutcome(options, resolvedDecision);
+             })();
+-            if (tracksForeground && outcome.outcome === 'selected') {
++            const isApproved = strictPermission
++              ? result.decision === 'approved' && outcome.outcome === 'selected'
++              : result.decision === 'approved' || result.decision === 'approved_for_session'
++                || result.decision === 'approved_execpolicy_amendment';
++            if (tracksForeground && !strictPermission && outcome.outcome === 'selected') {
+               this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
+             } else if (tracksForeground) {
+               this.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
+@@ -1957,9 +1980,11 @@ export class AcpBackend implements AgentBackend {
+               // Important: still return the actual permission outcome (e.g. "deny") so ACP agents
+               // can distinguish an explicit rejection from a transport cancellation.
+               if (tracksForeground) {
+-                void this.cancel(requestSessionId).catch((error: unknown) => {
+-                  this.emit({ type: 'status', status: 'error', detail: error instanceof Error ? error.message : 'ACP cancellation failed', error });
+-                });
++                if (!strictPermission) {
++                  void this.cancel(requestSessionId).catch((error: unknown) => {
++                    this.emit({ type: 'status', status: 'error', detail: error instanceof Error ? error.message : 'ACP cancellation failed', error });
++                  });
++                }
+                 this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
+               }
+               return { outcome };
+diff --git a/apps/cli/src/agent/acp/__tests__/AcpBackend.permissionCancellationOwnership.test.ts b/apps/cli/src/agent/acp/__tests__/AcpBackend.permissionCancellationOwnership.test.ts
+index d12d42af..c452e3e5 100644
+--- a/apps/cli/src/agent/acp/__tests__/AcpBackend.permissionCancellationOwnership.test.ts
++++ b/apps/cli/src/agent/acp/__tests__/AcpBackend.permissionCancellationOwnership.test.ts
+@@ -1,6 +1,6 @@
+ import { readFile, writeFile } from 'node:fs/promises';
+ import { join } from 'node:path';
+-import { describe, expect, it } from 'vitest';
++import { describe, expect, it, vi } from 'vitest';
+ 
+ import { AcpBackend } from '../AcpBackend';
+ import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+@@ -139,6 +139,42 @@ async function cancellations(dir: string): Promise<unknown[]> {
+ }
+ 
+ describe('ACP permission cancellation ownership', () => {
++  it('requires a second restricted decision when the provider reuses a tool-call ID', async () => {
++    vi.stubEnv('HAPPIER_RAC_RESTRICTED_DEPLOYMENT', '1');
++    try {
++      await withTempDir('happier-acp-restricted-permission-', async (dir) => {
++        const occurrenceIds: string[] = [];
++        const backend = new AcpBackend({
++          agentName: 'test', cwd: dir, command: process.execPath,
++          args: [permissionAgent(dir, 'owned-session', true)],
++          permissionHandler: { handleToolCall: async (occurrenceId) => {
++            occurrenceIds.push(occurrenceId);
++            return { decision: occurrenceIds.length === 1 ? 'approved' : 'denied' };
++          } },
++          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 50 }),
++        });
++        try {
++          const started = await backend.startSession();
++          await backend.sendPrompt(started.sessionId, 'permission');
++          await expect(backend.waitForResponseComplete()).resolves.toMatchObject({ kind: 'completed' });
++          expect(JSON.parse(await readFile(join(dir, 'permission.jsonl'), 'utf8'))).toEqual({
++            outcome: { outcome: 'selected', optionId: 'allow' },
++          });
++          expect(JSON.parse(await readFile(join(dir, 'second-permission.jsonl'), 'utf8'))).toEqual({
++            outcome: { outcome: 'selected', optionId: 'reject' },
++          });
++          expect(occurrenceIds).toHaveLength(2);
++          expect(new Set(occurrenceIds).size).toBe(2);
++          expect(await cancellations(dir)).toEqual([]);
++        } finally {
++          await backend.dispose();
++        }
++      });
++    } finally {
++      vi.unstubAllEnvs();
++    }
++  });
++
+   it('preserves the active Grok query permission default without a handler', async () => {
+     await withTempDir('happier-grok-default-permission-', async (dir) => {
+       const backend = new AcpBackend({
+diff --git a/apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.test.ts b/apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.test.ts
+index 8dcffe7e..c9936a8f 100644
+--- a/apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.test.ts
++++ b/apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.test.ts
+@@ -1,4 +1,4 @@
+-import { afterEach, describe, expect, it } from 'vitest';
++import { afterEach, describe, expect, it, vi } from 'vitest';
+ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+@@ -65,6 +65,23 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
+     delete process.env.HAPPIER_STACK_TOOL_TRACE;
+     delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
+     __resetToolTraceForTests();
++    vi.unstubAllEnvs();
++  });
++
++  it('requires a fresh explicit decision in restricted deployment even under full-access mode', async () => {
++    vi.stubEnv('HAPPIER_RAC_RESTRICTED_DEPLOYMENT', '1');
++    const session = new FakeSession();
++    const handler = new ProviderEnforcedPermissionHandler(asApiSessionClient(session), { logPrefix: '[Test]' });
++    handler.setPermissionMode('yolo');
++
++    const pending = handler.handleToolCall('restricted-approval', 'read_text_file', { path: 'example.txt' });
++    expect(session.agentState.requests['restricted-approval']).toBeTruthy();
++    await session.rpcHandlerManager.handlers.get('permission')?.({
++      id: 'restricted-approval',
++      approved: false,
++      decision: 'denied',
++    });
++    await expect(pending).resolves.toEqual({ decision: 'denied' });
+   });
+ 
+   it('auto-approves known safe tools but does not auto-approve substring collisions', async () => {
+diff --git a/apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.ts b/apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.ts
+index d3ea387f..19a44b1d 100644
+--- a/apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.ts
++++ b/apps/cli/src/agent/permissions/ProviderEnforcedPermissionHandler.ts
+@@ -28,6 +28,7 @@ import { shouldDenyAgentSessionTitleToolCall } from './codingPromptTitlePermissi
+ import { resolveSessionCodingPromptSettingsFromSession } from '../prompting/coding/resolveSessionCodingPromptSettings';
+ import { resolveAgentRequestKind } from './requestKind';
+ import { isTrustedAlwaysAutoApproveToolName } from './alwaysAutoApproveToolName';
++import { isRestrictedDeploymentConfigured } from '@/security/restrictedDeployment/policy';
+ 
+ export type { PermissionResult, PendingRequest };
+ 
+@@ -65,6 +66,7 @@ function isFullAccessPermissionMode(mode: PermissionMode): boolean {
+ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
+   private readonly logPrefix: string;
+   private readonly alwaysAutoApproveToolNameIncludes: ReadonlyArray<string>;
++  private readonly requireInteractiveDecision = isRestrictedDeploymentConfigured();
+   private currentPermissionMode: PermissionMode = 'default';
+ 
+   constructor(
+@@ -117,6 +119,10 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
+     return isTrustedAlwaysAutoApproveToolName(toolName, this.alwaysAutoApproveToolNameIncludes);
+   }
+ 
++  protected override isAllowedForSession(toolName: string, input: unknown): boolean {
++    return !this.requireInteractiveDecision && super.isAllowedForSession(toolName, input);
++  }
++
+   /** Apply explicit denials before safe-tool or full-access approval, using the admitted turn policy when supplied. */
+   getImmediateDecision(
+     toolCallId: string,
+@@ -139,6 +145,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
+     })) {
+       return { decision: 'denied' };
+     }
++    if (this.requireInteractiveDecision) return null;
+     if (isFullAccessPermissionMode(context?.permissionMode ?? this.currentPermissionMode) && resolveAgentRequestKind(toolName) === 'permission') {
+       return { decision: 'approved' };
+     }
+diff --git a/apps/cli/src/api/apiMachine.ts b/apps/cli/src/api/apiMachine.ts
+index 80b44fad..650f5daa 100644
+--- a/apps/cli/src/api/apiMachine.ts
++++ b/apps/cli/src/api/apiMachine.ts
+@@ -339,6 +339,7 @@ export class ApiMachineClient {
+         // Initialize RPC handler manager
+         this.rpcHandlerManager = new RpcHandlerManager({
+             scopePrefix: this.machine.id,
++            restrictedDeploymentScope: 'machine',
+             encryptionKey: this.machine.encryptionKey,
+             encryptionVariant: this.machine.encryptionVariant,
+             responseMaxBytes: configuration.rpcResponseMaxBytes,
+diff --git a/apps/cli/src/api/rpc/RpcHandlerManager.test.ts b/apps/cli/src/api/rpc/RpcHandlerManager.test.ts
+index 7a292828..ce19af30 100644
+--- a/apps/cli/src/api/rpc/RpcHandlerManager.test.ts
++++ b/apps/cli/src/api/rpc/RpcHandlerManager.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, it, vi } from 'vitest';
++import { afterEach, describe, expect, it, vi } from 'vitest';
+ 
+ import { RpcHandlerManager } from './RpcHandlerManager';
+ import { logger } from '@/ui/logger';
+@@ -42,6 +42,32 @@ function createSocketEventBoundary() {
+   };
+ }
+ 
++describe('restricted deployment admission at the RPC dispatcher', () => {
++  afterEach(() => vi.unstubAllEnvs());
++
++  it.each(['machine', 'session'] as const)('denies registered remote and in-process operations in %s scope', async (scope) => {
++    vi.stubEnv('HAPPIER_RAC_RESTRICTED_DEPLOYMENT', '1');
++    vi.stubEnv('HAPPIER_RAC_POLICY_FILE', undefined);
++    const rpc = new RpcHandlerManager({
++      scopePrefix: 'restricted',
++      restrictedDeploymentScope: scope,
++      encryptionKey: null,
++      encryptionVariant: 'plain',
++      logger: () => {},
++    });
++    const operation = vi.fn(() => ({ ok: true }));
++    rpc.registerHandler('fixture.mutation', operation);
++
++    await expect(rpc.handleRequest({ method: 'restricted:fixture.mutation', params: {} })).resolves.toMatchObject({
++      errorCode: RPC_ERROR_CODES.FORBIDDEN,
++    });
++    await expect(rpc.invokeLocal('fixture.mutation', {})).resolves.toMatchObject({
++      errorCode: RPC_ERROR_CODES.FORBIDDEN,
++    });
++    expect(operation).not.toHaveBeenCalled();
++  });
++});
++
+ describe('RpcHandlerManager registration receipts', () => {
+   it('surfaces registration errors from only the active socket epoch', () => {
+     const onRegistrationError = vi.fn();
+diff --git a/apps/cli/src/api/rpc/RpcHandlerManager.ts b/apps/cli/src/api/rpc/RpcHandlerManager.ts
+index ca5b7ec6..435040b6 100644
+--- a/apps/cli/src/api/rpc/RpcHandlerManager.ts
++++ b/apps/cli/src/api/rpc/RpcHandlerManager.ts
+@@ -30,6 +30,7 @@ import {
+ } from '@happier-dev/protocol/rpc';
+ import { isPublicRpcHandlerError, readRpcErrorCode, toSocketRpcTargetFailureV1 } from '@happier-dev/protocol/rpcErrors';
+ import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
++import { createRestrictedRpcAdmission } from '@/security/restrictedDeployment/authorizeRpc';
+ 
+ export type RpcHandlerRegistrationReadiness =
+     | Readonly<{ status: 'ready' }>
+@@ -62,6 +63,7 @@ export class RpcHandlerManager {
+     private readonly onRegistrationError: RpcHandlerConfig['onRegistrationError'];
+     private readonly onRegistrationAcknowledged: RpcHandlerConfig['onRegistrationAcknowledged'];
+     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
++    private readonly admitRestrictedRpc: ReturnType<typeof createRestrictedRpcAdmission>;
+     private readonly projectTransportAcknowledgement: RpcHandlerConfig['projectTransportAcknowledgement'];
+     private readonly nowMs: () => number;
+     private socket: Socket | null = null;
+@@ -87,6 +89,10 @@ export class RpcHandlerManager {
+         this.onRegistrationError = config.onRegistrationError;
+         this.onRegistrationAcknowledged = config.onRegistrationAcknowledged;
+         this.authorizeRequest = config.authorizeRequest;
++        this.admitRestrictedRpc = createRestrictedRpcAdmission({
++            scope: config.restrictedDeploymentScope,
++            getSessionDirectory: config.getRestrictedSessionDirectory,
++        });
+         this.projectTransportAcknowledgement = config.projectTransportAcknowledgement;
+         this.nowMs = config.nowMs ?? (() => performance.now());
+     }
+@@ -189,6 +195,12 @@ export class RpcHandlerManager {
+                 ...(authorizationResult.errorCode ? { errorCode: authorizationResult.errorCode } : {}),
+               });
+             }
++            if (this.admitRestrictedRpc && !this.admitRestrictedRpc(this.readUnprefixedMethod(request.method), decryptedParams)) {
++                return this.encodeTransportResponse(request, {
++                    error: RPC_ERROR_MESSAGES.FORBIDDEN,
++                    errorCode: RPC_ERROR_CODES.FORBIDDEN,
++                });
++            }
+ 
+             // Call the handler
+             this.logger('[RPC] Calling handler', { method: request.method });
+@@ -252,6 +264,9 @@ export class RpcHandlerManager {
+         params: unknown,
+         options?: Readonly<{ signal?: AbortSignal }>,
+     ): Promise<unknown> {
++        if (this.admitRestrictedRpc && !this.admitRestrictedRpc(method, params)) {
++            return { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN };
++        }
+         const prefixedMethod = this.getPrefixedMethod(method);
+         const handler = this.handlers.get(prefixedMethod);
+         if (!handler) {
+diff --git a/apps/cli/src/api/rpc/types.ts b/apps/cli/src/api/rpc/types.ts
+index fb202668..0ab35d8d 100644
+--- a/apps/cli/src/api/rpc/types.ts
++++ b/apps/cli/src/api/rpc/types.ts
+@@ -77,6 +77,8 @@ export interface RpcHandlerConfig {
+     onRegistrationError?: (error: unknown) => void;
+     onRegistrationAcknowledged?: (method: string) => void;
+     nowMs?: () => number;
++    restrictedDeploymentScope?: 'machine' | 'session';
++    getRestrictedSessionDirectory?: () => string | null;
+     authorizeRequest?: (request: Readonly<{
+         method: string;
+         params: unknown;
+diff --git a/apps/cli/src/api/session/sessionClient.ts b/apps/cli/src/api/session/sessionClient.ts
+index a5a20001..5854af82 100644
+--- a/apps/cli/src/api/session/sessionClient.ts
++++ b/apps/cli/src/api/session/sessionClient.ts
+@@ -1035,6 +1035,8 @@ export class ApiSessionClient extends EventEmitter {
+         // Initialize RPC handler manager
+         this.rpcHandlerManager = new RpcHandlerManager({
+             scopePrefix: this.sessionId,
++            restrictedDeploymentScope: 'session',
++            getRestrictedSessionDirectory: () => this.runtimeWorkingDirectory,
+             encryptionKey: this.encryptionKey,
+             encryptionVariant: this.encryptionVariant,
+             encryptionMode: this.sessionEncryptionMode,
+diff --git a/apps/cli/src/daemon/spawn/stripDaemonOwnedChildEnvOverrides.ts b/apps/cli/src/daemon/spawn/stripDaemonOwnedChildEnvOverrides.ts
+index bcb35dc0..b992f303 100644
+--- a/apps/cli/src/daemon/spawn/stripDaemonOwnedChildEnvOverrides.ts
++++ b/apps/cli/src/daemon/spawn/stripDaemonOwnedChildEnvOverrides.ts
+@@ -1,4 +1,5 @@
+ import { SESSION_MACHINE_WORKSPACE_PATH_ENV } from '@/agent/runtime/sessionWorkspaceLocation';
++import { RESTRICTED_DEPLOYMENT_MODE_ENV, RESTRICTED_DEPLOYMENT_POLICY_ENV } from '@/security/restrictedDeployment/policy';
+ 
+ const DAEMON_OWNED_CHILD_ENV_KEYS = new Set<string>([
+   'HAPPIER_HOME_DIR',
+@@ -12,10 +13,12 @@ const DAEMON_OWNED_CHILD_ENV_KEYS = new Set<string>([
+   SESSION_MACHINE_WORKSPACE_PATH_ENV,
+ ]);
+ 
++const RESTRICTED_DEPLOYMENT_ENV_KEYS = new Set<string>([RESTRICTED_DEPLOYMENT_MODE_ENV, RESTRICTED_DEPLOYMENT_POLICY_ENV]);
++
+ export function stripDaemonOwnedChildEnvOverrides(input: Record<string, string>): Record<string, string> {
+   const out: Record<string, string> = Object.create(null);
+   for (const [key, value] of Object.entries(input)) {
+-    if (DAEMON_OWNED_CHILD_ENV_KEYS.has(key)) continue;
++    if (DAEMON_OWNED_CHILD_ENV_KEYS.has(key) || RESTRICTED_DEPLOYMENT_ENV_KEYS.has(key.toUpperCase())) continue;
+     out[key] = value;
+   }
+   return out;
+diff --git a/apps/cli/src/daemon/startDaemon.ts b/apps/cli/src/daemon/startDaemon.ts
+index 0c701256..4aa7b72a 100644
+--- a/apps/cli/src/daemon/startDaemon.ts
++++ b/apps/cli/src/daemon/startDaemon.ts
+@@ -112,6 +112,7 @@ import { resolveDaemonOwnershipConflictExitCode } from '@/daemon/ownership/resol
+ import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
+ 
+ import { forceStopKnownDaemonPid, isDaemonRunningCurrentlyInstalledHappyVersion, resolveDaemonSpawnSessionByNonce, stopDaemon } from './controlClient';
++import { isRestrictedDeploymentConfigured } from '@/security/restrictedDeployment/policy';
+ import { createRuntimeAuthFailureReportIntake, startDaemonControlServer } from './controlServer';
+ import { readBuiltInCatalogAgentIdFromBackendTarget, resolveTrackedSessionCatalogAgentId } from './sessions/resolveTrackedSessionCatalogAgentId';
+ import { extractResumeIdFromCommand } from './sessions/extractResumeIdFromCommand';
+@@ -3061,6 +3062,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
+                   options: SpawnSessionOptions,
+                   acceptanceHooks?: SpawnSessionRunnerAcceptanceHooks,
+                 ): Promise<SpawnSessionResult> => {
++          if (isRestrictedDeploymentConfigured()) {
++            return {
++              type: 'error',
++              errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
++              errorMessage: 'The restricted controller has no enabled launch profiles.',
++            };
++          }
+           let normalizedOptions: SpawnSessionOptions = {
+             ...options,
+             directory: normalizeSpawnSessionDirectory(options.directory, process.env),
+diff --git a/apps/cli/src/security/restrictedDeployment/authorizeRpc.ts b/apps/cli/src/security/restrictedDeployment/authorizeRpc.ts
+new file mode 100644
+index 00000000..e3c7c971
+--- /dev/null
++++ b/apps/cli/src/security/restrictedDeployment/authorizeRpc.ts
+@@ -0,0 +1,50 @@
++import {
++    isRestrictedDeploymentConfigured,
++    loadRestrictedDeploymentPolicy,
++    readProjectIdentity,
++    RESTRICTED_DEPLOYMENT_MODE_ENV,
++    RESTRICTED_DEPLOYMENT_POLICY_ENV,
++    type RestrictedDeploymentPolicy,
++} from './policy';
++
++type RpcAdmission = (method: string, params: unknown) => boolean;
++
++/** Evaluate only explicitly supported deployed RPCs against a startup policy snapshot. */
++export function createRestrictedRpcAdmission(input: Readonly<{
++    scope?: 'machine' | 'session';
++    getSessionDirectory?: () => string | null;
++    env?: NodeJS.ProcessEnv;
++}>): RpcAdmission | undefined {
++    const env = input.env ?? process.env;
++    if (!isRestrictedDeploymentConfigured(env)) return undefined;
++    const mode = env[RESTRICTED_DEPLOYMENT_MODE_ENV];
++    const policyPath = env[RESTRICTED_DEPLOYMENT_POLICY_ENV];
++    const getSessionDirectory = input.getSessionDirectory;
++    if (mode !== '1' || !policyPath || input.scope !== 'session' || !getSessionDirectory) {
++        return () => false;
++    }
++
++    try {
++        const policy = loadRestrictedDeploymentPolicy(policyPath);
++        let boundProject: RestrictedDeploymentPolicy['projects'][number] | undefined;
++        const sessionMethods = new Set(policy.allowedSessionMethods);
++        const forbiddenMethods = new Set(policy.forbiddenMethods);
++        return (method, params) => {
++            // Other operations require a receiver-owned schema and a separately integrated grant/control path.
++            if (method !== 'session.workState.get' || !sessionMethods.has(method) || forbiddenMethods.has(method)) return false;
++            if (!params || typeof params !== 'object' || Array.isArray(params) || Object.keys(params).length !== 0) return false;
++            try {
++                const directory = getSessionDirectory();
++                if (!directory) return false;
++                const current = readProjectIdentity(directory);
++                boundProject ??= policy.projects.find(candidate => candidate.canonicalPath === current.canonicalPath
++                    && candidate.directoryIdentity === current.directoryIdentity);
++                return current.canonicalPath === boundProject?.canonicalPath && current.directoryIdentity === boundProject.directoryIdentity;
++            } catch {
++                return false;
++            }
++        };
++    } catch {
++        return () => false;
++    }
++}
+diff --git a/apps/cli/src/security/restrictedDeployment/policy.test.ts b/apps/cli/src/security/restrictedDeployment/policy.test.ts
+new file mode 100644
+index 00000000..f4f55661
+--- /dev/null
++++ b/apps/cli/src/security/restrictedDeployment/policy.test.ts
+@@ -0,0 +1,112 @@
++import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { afterEach, beforeEach, describe, expect, it } from 'vitest';
++
++import { createRestrictedRpcAdmission } from './authorizeRpc';
++
++describe('restricted deployment RPC admission', () => {
++  let root: string;
++  let project: string;
++  let policyPath: string;
++
++  function directoryIdentity(path: string): string {
++    const stat = statSync(path, { bigint: true });
++    return `${stat.dev}:${stat.ino}`;
++  }
++
++  function policy() {
++    return {
++      schemaVersion: 1,
++      revision: 'fixture-revision',
++      projects: [{ projectId: 'fixture', canonicalPath: project, directoryIdentity: directoryIdentity(project) }],
++      profiles: ['command-code', 'opencode', 'codex', 'babel'].map(id => ({
++        id,
++        backendId: id,
++        commandFingerprint: 'a'.repeat(64),
++        remoteSettings: [] as string[],
++      })),
++      allowedMachineMethods: ['capabilities.invoke', 'bash'],
++      allowedSessionMethods: ['session.workState.get', 'writeFile', 'daemon.terminal.input', 'future.handler'],
++      forbiddenMethods: [] as string[],
++    };
++  }
++
++  function publish(value = policy()): NodeJS.ProcessEnv {
++    writeFileSync(policyPath, JSON.stringify(value), { mode: 0o600 });
++    return { HAPPIER_RAC_RESTRICTED_DEPLOYMENT: '1', HAPPIER_RAC_POLICY_FILE: policyPath };
++  }
++
++  beforeEach(() => {
++    root = realpathSync(mkdtempSync(join(tmpdir(), 'happier-restricted-')));
++    project = join(root, 'project');
++    policyPath = join(root, 'policy.json');
++    mkdirSync(project);
++  });
++
++  afterEach(() => rmSync(root, { recursive: true, force: true }));
++
++  it('preserves stock admission only when restricted configuration is absent', () => {
++    expect(createRestrictedRpcAdmission({ scope: 'machine', env: {} })).toBeUndefined();
++    const missing = createRestrictedRpcAdmission({ scope: 'machine', env: { HAPPIER_RAC_RESTRICTED_DEPLOYMENT: '1' } });
++    expect(missing?.('bash', {})).toBe(false);
++    const invalid = createRestrictedRpcAdmission({ scope: 'machine', env: { HAPPIER_RAC_RESTRICTED_DEPLOYMENT: '0' } });
++    expect(invalid?.('bash', {})).toBe(false);
++  });
++
++  it('denies unevaluated methods in both scopes even when listed in the policy', () => {
++    const env = publish();
++    const machine = createRestrictedRpcAdmission({ scope: 'machine', env });
++    const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env });
++    expect(machine?.('bash', {})).toBe(false);
++    expect(machine?.('capabilities.invoke', {})).toBe(false);
++    expect(session?.('writeFile', {})).toBe(false);
++    expect(session?.('daemon.terminal.input', {})).toBe(false);
++    expect(session?.('future.handler', {})).toBe(false);
++    expect(session?.('session.workState.get', { projectId: 'fixture' })).toBe(false);
++    expect(session?.('session.workState.get', {})).toBe(true);
++  });
++
++  it('rechecks receiver-owned directory identity for previously admitted sessions', () => {
++    const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env: publish() });
++    expect(session?.('session.workState.get', {})).toBe(true);
++    renameSync(project, join(root, 'previous'));
++    mkdirSync(project);
++    expect(session?.('session.workState.get', {})).toBe(false);
++  });
++
++  it('waits for a receiver-owned runtime directory and keeps that project bound', () => {
++    const secondProject = join(root, 'second');
++    mkdirSync(secondProject);
++    const config = policy();
++    config.projects.push({ projectId: 'second', canonicalPath: secondProject, directoryIdentity: directoryIdentity(secondProject) });
++    let directory = '';
++    const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => directory, env: publish(config) });
++    expect(session?.('session.workState.get', {})).toBe(false);
++    directory = project;
++    expect(session?.('session.workState.get', {})).toBe(true);
++    directory = secondProject;
++    expect(session?.('session.workState.get', {})).toBe(false);
++  });
++
++  it('denies admission when the policy path lies inside an enrolled project', () => {
++    policyPath = join(project, 'policy.json');
++    const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env: publish() });
++    expect(session?.('session.workState.get', {})).toBe(false);
++  });
++
++  it('denies admission for duplicate project IDs, duplicate profiles, or Babel mode overrides', () => {
++    const secondProject = join(root, 'second');
++    mkdirSync(secondProject);
++    const duplicateProject = policy();
++    duplicateProject.projects.push({ projectId: 'fixture', canonicalPath: secondProject, directoryIdentity: directoryIdentity(secondProject) });
++    const duplicateProfile = policy();
++    duplicateProfile.profiles[0].id = 'babel';
++    const babelOverride = policy();
++    babelOverride.profiles[3].remoteSettings.push('mode');
++    for (const invalid of [duplicateProject, duplicateProfile, babelOverride]) {
++      const session = createRestrictedRpcAdmission({ scope: 'session', getSessionDirectory: () => project, env: publish(invalid) });
++      expect(session?.('session.workState.get', {})).toBe(false);
++    }
++  });
++});
+diff --git a/apps/cli/src/security/restrictedDeployment/policy.ts b/apps/cli/src/security/restrictedDeployment/policy.ts
+new file mode 100644
+index 00000000..ae793766
+--- /dev/null
++++ b/apps/cli/src/security/restrictedDeployment/policy.ts
+@@ -0,0 +1,116 @@
++import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
++import { dirname, isAbsolute, normalize, relative, sep } from 'node:path';
++import { z } from 'zod';
++
++export const RESTRICTED_DEPLOYMENT_MODE_ENV = 'HAPPIER_RAC_RESTRICTED_DEPLOYMENT';
++export const RESTRICTED_DEPLOYMENT_POLICY_ENV = 'HAPPIER_RAC_POLICY_FILE';
++
++export function isRestrictedDeploymentConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
++    return env[RESTRICTED_DEPLOYMENT_MODE_ENV] !== undefined || env[RESTRICTED_DEPLOYMENT_POLICY_ENV] !== undefined;
++}
++
++const MAX_POLICY_BYTES = 256 * 1024;
++const PROFILE_IDS = ['command-code', 'opencode', 'codex', 'babel'] as const;
++const identifier = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/);
++const methods = z.array(identifier).max(128).refine(values => new Set(values).size === values.length);
++const policySchema = z.strictObject({
++    schemaVersion: z.literal(1),
++    revision: identifier,
++    projects: z.array(z.strictObject({
++        projectId: identifier,
++        canonicalPath: z.string().min(1).max(4096),
++        directoryIdentity: z.string().regex(/^\d+:\d+$/),
++    })).min(1).max(128),
++    profiles: z.array(z.strictObject({
++        id: z.enum(PROFILE_IDS),
++        backendId: identifier,
++        commandFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
++        remoteSettings: z.array(z.enum(['model', 'mode'])).max(2)
++            .refine(values => new Set(values).size === values.length),
++    })).length(PROFILE_IDS.length),
++    allowedMachineMethods: methods,
++    allowedSessionMethods: methods,
++    forbiddenMethods: methods,
++});
++
++export type RestrictedDeploymentPolicy = z.infer<typeof policySchema>;
++
++function canonicalLocalPath(path: string): string {
++    if (!isAbsolute(path) || path.includes('\0') || dirname(path) === path) {
++        throw new Error('Expected an absolute local path below a filesystem root');
++    }
++    if (process.platform === 'win32' && !/^[a-z]:[\\/][^:]+$/i.test(path)) {
++        throw new Error('Expected a local Windows drive path');
++    }
++    const canonical = realpathSync.native(path);
++    if (process.platform === 'win32' && !/^[a-z]:[\\/][^:]+$/i.test(canonical)) {
++        throw new Error('Expected a canonical local Windows drive path');
++    }
++    const normalizeCase = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
++    if (normalizeCase(canonical) !== normalizeCase(normalize(path))) {
++        throw new Error('Path aliases are not eligible for restricted deployment');
++    }
++    return canonical;
++}
++
++export function readProjectIdentity(path: string): Readonly<{ canonicalPath: string; directoryIdentity: string }> {
++    const canonicalPath = canonicalLocalPath(path);
++    const stats = statSync(canonicalPath, { bigint: true });
++    if (!stats.isDirectory() || stats.ino === 0n) {
++        throw new Error('Project directory identity is unavailable');
++    }
++    return { canonicalPath, directoryIdentity: `${stats.dev}:${stats.ino}` };
++}
++
++function readPolicyJson(path: string): unknown {
++    const descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
++    try {
++        const stats = fstatSync(descriptor);
++        if (!stats.isFile() || stats.size === 0 || stats.size > MAX_POLICY_BYTES) {
++            throw new Error('Restricted deployment policy must be a bounded regular file');
++        }
++        if (process.getuid && (stats.uid !== process.getuid() || (stats.mode & 0o077) !== 0)) {
++            throw new Error('Restricted deployment policy must be private to the local owner');
++        }
++        const buffer = Buffer.alloc(MAX_POLICY_BYTES + 1);
++        let length = 0;
++        while (length < buffer.length) {
++            const read = readSync(descriptor, buffer, length, buffer.length - length, null);
++            if (read === 0) break;
++            length += read;
++        }
++        if (length !== stats.size) throw new Error('Restricted deployment policy changed during publication');
++        return JSON.parse(buffer.subarray(0, length).toString('utf8'));
++    } finally {
++        closeSync(descriptor);
++    }
++}
++
++export function loadRestrictedDeploymentPolicy(path: string): RestrictedDeploymentPolicy {
++    const canonicalPolicyPath = canonicalLocalPath(path);
++    const policy = policySchema.parse(readPolicyJson(canonicalPolicyPath));
++    if (new Set(policy.profiles.map(profile => profile.id)).size !== PROFILE_IDS.length) {
++        throw new Error('Restricted deployment requires four distinct profiles');
++    }
++    if (policy.profiles.some(profile => profile.id === 'babel' && profile.remoteSettings.length !== 0)) {
++        throw new Error('The Babel profile forbids remote settings');
++    }
++    const projectIds = new Set<string>();
++    const directoryIds = new Set<string>();
++    for (const project of policy.projects) {
++        const identity = readProjectIdentity(project.canonicalPath);
++        if (identity.directoryIdentity !== project.directoryIdentity || projectIds.has(project.projectId)
++            || directoryIds.has(identity.directoryIdentity)) {
++            throw new Error('Invalid or duplicate restricted project identity');
++        }
++        const policyRelativeToProject = relative(identity.canonicalPath, canonicalPolicyPath);
++        if (policyRelativeToProject !== '..' && !policyRelativeToProject.startsWith(`..${sep}`)
++            && !isAbsolute(policyRelativeToProject)) {
++            throw new Error('Restricted deployment policy must be outside all project directories');
++        }
++        project.canonicalPath = identity.canonicalPath;
++        projectIds.add(project.projectId);
++        directoryIds.add(identity.directoryIdentity);
++    }
++    return policy;
++}

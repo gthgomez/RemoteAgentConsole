@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,10 +12,16 @@ const serverEntry = fileURLToPath(new URL("../src/server.ts", import.meta.url));
 const children: ChildProcess[] = [];
 const tempDirectories: string[] = [];
 
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  // Subscribe before kill so the release of the SQLite handles is observed before cleanup.
+  const exited = once(child, "exit", { signal: AbortSignal.timeout(5_000) });
+  child.kill();
+  await exited;
+}
+
 afterEach(async () => {
-  for (const child of children.splice(0)) {
-    if (child.exitCode === null) child.kill();
-  }
+  await Promise.all(children.splice(0).map((child) => stopChild(child)));
   await Promise.all(
     tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
   );

@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "repositories": {
+    "rac": {
+      "url": "https://github.com/gthgomez/RemoteAgentConsole.git",
+      "commit": "66a8501f0ef704498bf973e63965909c2ccf3514",
+      "tree": "5d2446e60f5f83e11c47212c22d98bd9f048fdd0",
+      "lockfiles": {
+        "pnpm-lock.yaml": "1281e4623ca8aeaf51ff720ca6c95f43538a7a6e52ea0d8980ed9e53ebd11ff1"
+      }
+    },
+    "babel": {
+      "url": "https://github.com/gthgomez/Babel.git",
+      "commit": "b7611af8cf0a7756cbd2bd13260fee01b4c6de03",
+      "tree": "1b9c37e16feb64b1907cbbbfa927bf0a0e66cef8",
+      "lockfiles": {
+        "babel-cli/package-lock.json": "60f7b4a67fccd25d92b51016a07287d4c9ce3c2694d9e0ee9456258dea4e01fd"
+      }
+    },
+    "happier": {
+      "url": "https://github.com/happier-dev/happier.git",
+      "commit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+      "tree": "911bdc3c673608490b932bd939166d88f198066a",
+      "patchedTree": "c62fcb80464a0b7161efb4c09bdcbd8d9506bea4",
+      "lockfiles": {
+        "yarn.lock": "ca4cd35cc3737beba3a8b14a5fd5d233fbc90b8bb11dc1cdfd91d233a9e347c6"
+      },
+      "license": {
+        "path": "LICENCE",
+        "sha256": "e251d0448ef3ce023c20ebac9b90a7d8642b1434825838247d6e457668eb3e00"
+      }
+    }
+  },
+  "toolchain": {
+    "node": "24.22.1",
+    "yarn": "1.22.22",
+    "bun": "1.4.4",
+    "pnpm": "12.4.1"
+  },
+  "referenceArtifacts": [
+    {
+      "id": "happier-cli-windows-x64",
+      "component": "cli",
+      "platform": "windows-x64",
+      "sourceCommit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+      "url": "https://github.com/happier-dev/happier/releases/download/cli-v0.2.21/happier-v0.2.21-windows-x64.tar.gz",
+      "fileName": "happier-v0.2.21-windows-x64.tar.gz",
+      "sha256": "4ee44f2b852b6b25ca977ed6d035859dc30d38f73d21ed0f17bbc4d364e2462a",
+      "bytes": 111044115
+    },
+    {
+      "id": "happier-server-windows-x64",
+      "component": "server-with-web",
+      "platform": "windows-x64",
+      "sourceCommit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+      "url": "https://github.com/happier-dev/happier/releases/download/server-v0.2.21/happier-server-v0.2.21-windows-x64.tar.gz",
+      "fileName": "happier-server-v0.2.21-windows-x64.tar.gz",
+      "sha256": "9f1350a9a65a52791e0a673628b38651307599ec5d4c2b48a8685aad78eed2a1",
+      "bytes": 413440746
+    },
+    {
+      "id": "happier-standalone-web-reference",
+      "component": "standalone-web-reference",
+      "platform": "web-any",
+      "sourceCommit": "f6f4032ffe21310f83a652c0c7dc07a205e66ee8",
+      "url": "https://github.com/happier-dev/happier/releases/download/ui-web-v0.2.21/happier-ui-web-v0.2.21-web-any.tar.gz",
+      "fileName": "happier-ui-web-v0.2.21-web-any.tar.gz",
+      "sha256": "cfa8a26469c8bbf18c195e46c695b2d38ea12e76576990c3a69b7a81ef1c3a2e",
+      "bytes": 99970045
+    }
+  ]
+}

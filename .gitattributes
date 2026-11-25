@@ -1,0 +1,10 @@
+# Keep working trees identical across platforms. Hosted Windows runners use
+# Git for Windows with autocrlf enabled by default, which would otherwise check
+# out CRLF and break LF-addressed inputs (patch SHA-256) and Biome formatting.
+* text=auto eol=lf
+
+# Content-addressed patch series must always be stored and checked out as LF.
+patches/**/*.patch text eol=lf
+
+# Binary assets are never line-ending converted.
+*.png binary

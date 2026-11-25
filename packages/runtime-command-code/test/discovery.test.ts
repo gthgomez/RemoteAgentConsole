@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AcpRuntimeOptions } from "@remote-agent-console/acp-client";
@@ -49,9 +49,17 @@ describe("Command Code discovery and ACP wrapper", () => {
   it("discovers the executable from PATH and skips non-executable files", async () => {
     const directory = await makeDirectory();
     const candidate = join(directory, executableName);
-    await writeFile(candidate, "not executable");
-    await chmod(candidate, 0o644);
+    // A directory at the candidate path is not a file on any platform.
+    await mkdir(candidate);
     expect(discoverCommandCodeExecutable({ env: { PATH: directory } })).toBeNull();
+    await rm(candidate, { recursive: true });
+
+    // Windows has no POSIX execute bit, so check this only on POSIX hosts.
+    if (process.platform !== "win32") {
+      await writeFile(candidate, "not executable");
+      await chmod(candidate, 0o644);
+      expect(discoverCommandCodeExecutable({ env: { PATH: directory } })).toBeNull();
+    }
 
     await makeFakeExecutable(directory);
     expect(discoverCommandCodeExecutable({ env: { PATH: directory } })).toBe(candidate);

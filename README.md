@@ -2,6 +2,8 @@
 
 A local-first control plane for coding-agent sessions. The host runs agents on your computer; the mobile-first PWA controls them through the host API.
 
+The next release uses a [pinned Happier composition](docs/decisions/maintained-controller.md) for the relay, daemon and phone interface. The commands below describe the legacy host and its development fixtures. See [the composition lock](distribution/composition-lock.json) for the selected source and upstream archives.
+
 ## Requirements
 
 - Node.js 22 through 24
@@ -67,3 +69,13 @@ pnpm build
 ## Architecture
 
 See [docs/CAMPAIGN.md](docs/CAMPAIGN.md) for the active milestone, scope, and architectural invariants. The web client talks to the local host API; ACP protocol details stay in the host-side ACP client.
+
+## Archive legacy history
+
+Use Node 24 and a self-contained SQLite backup from a stopped or checkpointed legacy host. Choose an output directory accessible only to the local owner.
+
+```sh
+node tools/export-rac-history.mjs --source-copy backup.sqlite --output history.jsonl
+```
+
+The archive records the backup SHA-256 and counts for projects, sessions, chronological turns and events, and historical permission decisions. Device credentials, pairing state, pending permission rows and operation keys are excluded. Keep the archive as a local record during migration.

@@ -1,0 +1,2163 @@
+diff --git a/apps/server/prisma/migrations/20261124193000_add_restricted_device_enrollments/migration.sql b/apps/server/prisma/migrations/20261124193000_add_restricted_device_enrollments/migration.sql
+new file mode 100644
+index 0000000..c8bb9c6
+--- /dev/null
++++ b/apps/server/prisma/migrations/20261124193000_add_restricted_device_enrollments/migration.sql
+@@ -0,0 +1,35 @@
++-- CreateTable
++CREATE TABLE "RestrictedDeviceEnrollment" (
++    "id" TEXT NOT NULL,
++    "accountId" TEXT NOT NULL,
++    "authorityIncarnation" TEXT NOT NULL,
++    "kind" TEXT NOT NULL,
++    "secretHash" TEXT NOT NULL,
++    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    "expiresAt" TIMESTAMP(3) NOT NULL,
++    "consumedAt" TIMESTAMP(3),
++    "redeemedGrantId" TEXT,
++
++    CONSTRAINT "RestrictedDeviceEnrollment_pkey" PRIMARY KEY ("id")
++);
++
++-- CreateIndex
++CREATE UNIQUE INDEX "RestrictedDeviceEnrollment_secretHash_key" ON "RestrictedDeviceEnrollment"("secretHash");
++
++-- CreateIndex
++CREATE UNIQUE INDEX "RestrictedDeviceEnrollment_redeemedGrantId_key" ON "RestrictedDeviceEnrollment"("redeemedGrantId");
++
++-- CreateIndex
++CREATE INDEX "RestrictedDeviceEnrollment_accountId_createdAt_idx" ON "RestrictedDeviceEnrollment"("accountId", "createdAt");
++
++-- CreateIndex
++CREATE INDEX "RestrictedDeviceEnrollment_accountId_consumedAt_expiresAt_idx" ON "RestrictedDeviceEnrollment"("accountId", "consumedAt", "expiresAt");
++
++-- CreateIndex
++CREATE INDEX "RestrictedDeviceEnrollment_authorityIncarnation_consumedAt_expiresAt_idx" ON "RestrictedDeviceEnrollment"("authorityIncarnation", "consumedAt", "expiresAt");
++
++-- AddForeignKey
++ALTER TABLE "RestrictedDeviceEnrollment" ADD CONSTRAINT "RestrictedDeviceEnrollment_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE;
++
++-- AddForeignKey
++ALTER TABLE "RestrictedDeviceEnrollment" ADD CONSTRAINT "RestrictedDeviceEnrollment_redeemedGrantId_fkey" FOREIGN KEY ("redeemedGrantId") REFERENCES "RestrictedDeviceGrant"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+diff --git a/apps/server/prisma/mysql/migrations/20261124193000_add_restricted_device_enrollments/migration.sql b/apps/server/prisma/mysql/migrations/20261124193000_add_restricted_device_enrollments/migration.sql
+new file mode 100644
+index 0000000..020a6d7
+--- /dev/null
++++ b/apps/server/prisma/mysql/migrations/20261124193000_add_restricted_device_enrollments/migration.sql
+@@ -0,0 +1,25 @@
++-- CreateTable
++CREATE TABLE `RestrictedDeviceEnrollment` (
++    `id` VARCHAR(191) NOT NULL,
++    `accountId` VARCHAR(191) NOT NULL,
++    `authorityIncarnation` VARCHAR(191) NOT NULL,
++    `kind` VARCHAR(191) NOT NULL,
++    `secretHash` VARCHAR(191) NOT NULL,
++    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
++    `expiresAt` DATETIME(3) NOT NULL,
++    `consumedAt` DATETIME(3) NULL,
++    `redeemedGrantId` VARCHAR(191) NULL,
++
++    UNIQUE INDEX `RestrictedDeviceEnrollment_secretHash_key`(`secretHash`),
++    UNIQUE INDEX `RestrictedDeviceEnrollment_redeemedGrantId_key`(`redeemedGrantId`),
++    INDEX `RestrictedDeviceEnrollment_accountId_createdAt_idx`(`accountId`, `createdAt`),
++    INDEX `RestrictedDeviceEnrollment_accountId_consumedAt_expiresAt_idx`(`accountId`, `consumedAt`, `expiresAt`),
++    INDEX `RestrictedDeviceEnrollment_authorityIncarnation_consumedAt_expiresAt_idx`(`authorityIncarnation`, `consumedAt`, `expiresAt`),
++    PRIMARY KEY (`id`)
++) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
++
++-- AddForeignKey
++ALTER TABLE `RestrictedDeviceEnrollment` ADD CONSTRAINT `RestrictedDeviceEnrollment_accountId_fkey` FOREIGN KEY (`accountId`) REFERENCES `Account`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
++
++-- AddForeignKey
++ALTER TABLE `RestrictedDeviceEnrollment` ADD CONSTRAINT `RestrictedDeviceEnrollment_redeemedGrantId_fkey` FOREIGN KEY (`redeemedGrantId`) REFERENCES `RestrictedDeviceGrant`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+diff --git a/apps/server/prisma/mysql/schema.prisma b/apps/server/prisma/mysql/schema.prisma
+index 21f64f7..18a13e9 100644
+--- a/apps/server/prisma/mysql/schema.prisma
++++ b/apps/server/prisma/mysql/schema.prisma
+@@ -58,6 +58,7 @@ model Account {
+     AccountAuthRequest     AccountAuthRequest[]
+     AuthPairingSession     AuthPairingSession[]
+     RestrictedDeviceGrant RestrictedDeviceGrant[]
++    RestrictedDeviceEnrollment RestrictedDeviceEnrollment[]
+     UsageReport            UsageReport[]
+     Machine                Machine[]
+     UploadedFile           UploadedFile[]
+@@ -104,10 +105,29 @@ model RestrictedDeviceGrant {
+     generation            Int       @default(1)
+     createdAt             DateTime  @default(now())
+     revokedAt             DateTime?
++    enrollment            RestrictedDeviceEnrollment?
+ 
+     @@index([accountId, revokedAt])
+ }
+ 
++model RestrictedDeviceEnrollment {
++    id                    String    @id @default(cuid())
++    accountId             String
++    account               Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
++    authorityIncarnation  String
++    kind                  String
++    secretHash            String    @unique
++    createdAt             DateTime  @default(now())
++    expiresAt             DateTime
++    consumedAt            DateTime?
++    redeemedGrantId       String?   @unique
++    redeemedGrant         RestrictedDeviceGrant? @relation(fields: [redeemedGrantId], references: [id], onDelete: SetNull)
++
++    @@index([accountId, createdAt])
++    @@index([accountId, consumedAt, expiresAt])
++    @@index([authorityIncarnation, consumedAt, expiresAt])
++}
++
+ model AccountSettingsSnapshot {
+     id              String   @id @default(cuid())
+     accountId       String
+diff --git a/apps/server/prisma/schema.prisma b/apps/server/prisma/schema.prisma
+index 45230ac..b42169d 100644
+--- a/apps/server/prisma/schema.prisma
++++ b/apps/server/prisma/schema.prisma
+@@ -57,6 +57,7 @@ model Account {
+     AccountAuthRequest     AccountAuthRequest[]
+     AuthPairingSession     AuthPairingSession[]
+     RestrictedDeviceGrant RestrictedDeviceGrant[]
++    RestrictedDeviceEnrollment RestrictedDeviceEnrollment[]
+     UsageReport            UsageReport[]
+     Machine                Machine[]
+     UploadedFile           UploadedFile[]
+@@ -103,10 +104,29 @@ model RestrictedDeviceGrant {
+     generation            Int       @default(1)
+     createdAt             DateTime  @default(now())
+     revokedAt             DateTime?
++    enrollment            RestrictedDeviceEnrollment?
+ 
+     @@index([accountId, revokedAt])
+ }
+ 
++model RestrictedDeviceEnrollment {
++    id                    String    @id @default(cuid())
++    accountId             String
++    account               Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
++    authorityIncarnation  String
++    kind                  String
++    secretHash            String    @unique
++    createdAt             DateTime  @default(now())
++    expiresAt             DateTime
++    consumedAt            DateTime?
++    redeemedGrantId       String?   @unique
++    redeemedGrant         RestrictedDeviceGrant? @relation(fields: [redeemedGrantId], references: [id], onDelete: SetNull)
++
++    @@index([accountId, createdAt])
++    @@index([accountId, consumedAt, expiresAt])
++    @@index([authorityIncarnation, consumedAt, expiresAt])
++}
++
+ model AccountSettingsSnapshot {
+     id              String   @id @default(cuid())
+     accountId       String
+diff --git a/apps/server/prisma/sqlite/migrations/20261124193000_add_restricted_device_enrollments/migration.sql b/apps/server/prisma/sqlite/migrations/20261124193000_add_restricted_device_enrollments/migration.sql
+new file mode 100644
+index 0000000..45f7468
+--- /dev/null
++++ b/apps/server/prisma/sqlite/migrations/20261124193000_add_restricted_device_enrollments/migration.sql
+@@ -0,0 +1,29 @@
++-- CreateTable
++CREATE TABLE "RestrictedDeviceEnrollment" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "accountId" TEXT NOT NULL,
++    "authorityIncarnation" TEXT NOT NULL,
++    "kind" TEXT NOT NULL,
++    "secretHash" TEXT NOT NULL,
++    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    "expiresAt" DATETIME NOT NULL,
++    "consumedAt" DATETIME,
++    "redeemedGrantId" TEXT,
++    CONSTRAINT "RestrictedDeviceEnrollment_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
++    CONSTRAINT "RestrictedDeviceEnrollment_redeemedGrantId_fkey" FOREIGN KEY ("redeemedGrantId") REFERENCES "RestrictedDeviceGrant" ("id") ON DELETE SET NULL ON UPDATE CASCADE
++);
++
++-- CreateIndex
++CREATE UNIQUE INDEX "RestrictedDeviceEnrollment_secretHash_key" ON "RestrictedDeviceEnrollment"("secretHash");
++
++-- CreateIndex
++CREATE UNIQUE INDEX "RestrictedDeviceEnrollment_redeemedGrantId_key" ON "RestrictedDeviceEnrollment"("redeemedGrantId");
++
++-- CreateIndex
++CREATE INDEX "RestrictedDeviceEnrollment_accountId_createdAt_idx" ON "RestrictedDeviceEnrollment"("accountId", "createdAt");
++
++-- CreateIndex
++CREATE INDEX "RestrictedDeviceEnrollment_accountId_consumedAt_expiresAt_idx" ON "RestrictedDeviceEnrollment"("accountId", "consumedAt", "expiresAt");
++
++-- CreateIndex
++CREATE INDEX "RestrictedDeviceEnrollment_authorityIncarnation_consumedAt_expiresAt_idx" ON "RestrictedDeviceEnrollment"("authorityIncarnation", "consumedAt", "expiresAt");
+diff --git a/apps/server/prisma/sqlite/schema.prisma b/apps/server/prisma/sqlite/schema.prisma
+index 4c509f3..fbdf178 100644
+--- a/apps/server/prisma/sqlite/schema.prisma
++++ b/apps/server/prisma/sqlite/schema.prisma
+@@ -58,6 +58,7 @@ model Account {
+     AccountAuthRequest     AccountAuthRequest[]
+     AuthPairingSession     AuthPairingSession[]
+     RestrictedDeviceGrant RestrictedDeviceGrant[]
++    RestrictedDeviceEnrollment RestrictedDeviceEnrollment[]
+     UsageReport            UsageReport[]
+     Machine                Machine[]
+     UploadedFile           UploadedFile[]
+@@ -104,10 +105,29 @@ model RestrictedDeviceGrant {
+     generation            Int       @default(1)
+     createdAt             DateTime  @default(now())
+     revokedAt             DateTime?
++    enrollment            RestrictedDeviceEnrollment?
+ 
+     @@index([accountId, revokedAt])
+ }
+ 
++model RestrictedDeviceEnrollment {
++    id                    String    @id @default(cuid())
++    accountId             String
++    account               Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
++    authorityIncarnation  String
++    kind                  String
++    secretHash            String    @unique
++    createdAt             DateTime  @default(now())
++    expiresAt             DateTime
++    consumedAt            DateTime?
++    redeemedGrantId       String?   @unique
++    redeemedGrant         RestrictedDeviceGrant? @relation(fields: [redeemedGrantId], references: [id], onDelete: SetNull)
++
++    @@index([accountId, createdAt])
++    @@index([accountId, consumedAt, expiresAt])
++    @@index([authorityIncarnation, consumedAt, expiresAt])
++}
++
+ model AccountSettingsSnapshot {
+     id              String   @id @default(cuid())
+     accountId       String
+diff --git a/apps/server/sources/app/auth/auth.ts b/apps/server/sources/app/auth/auth.ts
+index 7332225..5ea12ee 100644
+--- a/apps/server/sources/app/auth/auth.ts
++++ b/apps/server/sources/app/auth/auth.ts
+@@ -7,6 +7,8 @@ import {
+     OAuthStateUnavailableError,
+ } from "./oauthStateErrors";
+ import { readRestrictedDeviceAuthority, verifyRestrictedDeviceGrant, type RestrictedDeviceContext } from "./restrictedDeviceGrants";
++import { RestrictedDeviceGrantLifecycleError } from "./restrictedDeviceEnrollment";
++import type { RestrictedDeviceAuthority } from "./restrictedDeviceAuthority";
+ 
+ interface TokenGeneratorLike {
+     new: (payload: any) => Promise<string>;
+@@ -43,6 +45,7 @@ type OAuthStatePayload = Readonly<{
+ class AuthModule {
+     private tokenCache: LRUTtlMap<string, { userId: string; extras?: any }> | null = null;
+     private restrictedDeviceIncarnation: string | null = null;
++    private restrictedDeviceAuthority: RestrictedDeviceAuthority | null = null;
+     private tokens: AuthTokens | null = null;
+     private oauthStateTokens: OAuthStateTokens | null = null;
+     private oauthStateTokensInitPromise: Promise<OAuthStateTokens> | null = null;
+@@ -185,7 +188,17 @@ class AuthModule {
+         const signingSeed = deviceIncarnation
+             ? createHmac('sha256', masterSecret).update(`rac-device-authority-v1:${deviceIncarnation}`).digest('base64url')
+             : masterSecret;
++        // The env-derived incarnation is a configuration placeholder. The
++        // protected production binding (owner-only launcher/IPC and pre-listen
++        // restore rotation) is not implemented here and must not be inferred
++        // from this value alone.
++        const restrictedDeviceAuthority = deviceIncarnation
++            ? await (await import('./restrictedDeviceEnrollmentStore')).createPrismaRestrictedDeviceAuthority({
++                authorityIncarnation: deviceIncarnation,
++            })
++            : null;
+         this.tokens = await this.createPersistentAuthTokens(signingSeed, deviceIncarnation === null);
++        this.restrictedDeviceAuthority = restrictedDeviceAuthority;
+ 
+         const tokenCacheMaxEntries = this.resolveAuthTokenCacheMaxEntriesFromEnv(process.env);
+         if (tokenCacheMaxEntries > 0) {
+@@ -222,6 +235,34 @@ class AuthModule {
+         return token;
+     }
+ 
++    getRestrictedDeviceAuthority(): RestrictedDeviceAuthority | null {
++        return this.restrictedDeviceAuthority;
++    }
++
++    /**
++     * The only supported token issuance path in a restricted deployment. The
++     * durable grant is re-read and the signed claims bind its account,
++     * incarnation, id, kind, and generation; there is no legacy fallback.
++     */
++    async createRestrictedDeviceToken(userId: string, grantId: string): Promise<string> {
++        if (!this.tokens) {
++            throw new Error('Auth module not initialized');
++        }
++        const authority = this.restrictedDeviceAuthority;
++        if (!authority) {
++            throw new RestrictedDeviceGrantLifecycleError(
++                'authority-not-configured',
++                'Restricted device authority is not configured',
++            );
++        }
++
++        const claims = await authority.buildGrantClaims({ accountId: userId, grantId });
++        const token = await this.tokens.generator.new({ user: userId, extras: claims });
++
++        this.tokenCache?.set(token, { userId, extras: claims });
++        return token;
++    }
++
+     private async authorizeVerifiedToken(verified: { userId: string; extras?: any }): Promise<{
+         userId: string;
+         extras?: any;
+diff --git a/apps/server/sources/app/auth/restrictedDeviceAuthority.integration.spec.ts b/apps/server/sources/app/auth/restrictedDeviceAuthority.integration.spec.ts
+new file mode 100644
+index 0000000..d318a57
+--- /dev/null
++++ b/apps/server/sources/app/auth/restrictedDeviceAuthority.integration.spec.ts
+@@ -0,0 +1,311 @@
++/**
++ * Selected SQLite integration spec for the restricted device authority.
++ *
++ * This is the installed-runtime companion to the offline qualification fixtures.
++ * It is executable only in a complete Happier checkout with the pinned
++ * dependency install, the generated SQLite Prisma client, and the upstream
++ * migration deploy path. The offline patch workspace reports it as NOT_RUN.
++ *
++ * Preconditions: the disposable authorized Linux checkout already has portable
++ * Node 24.22.1 and Yarn 1.22.22 visible on PATH. Do not activate or install
++ * package-manager shims or globals; use only the provisioned tools. From the
++ * checkout root, confirm the versions and run the supported commands:
++ *   node --version                 # expect v24.22.1
++ *   yarn --version                 # expect 1.22.22
++ *   yarn install --frozen-lockfile
++ *   yarn --cwd apps/server build:shared
++ *   yarn --cwd apps/server generate:light
++ *   yarn --cwd apps/server test:integration \
++ *     sources/app/auth/restrictedDeviceAuthority.integration.spec.ts
++ *
++ * `generate:light` runs `schema:sync` and `prisma generate` for the SQLite
++ * schema. `build:shared` is explicit because the server `test:integration`
++ * script has no `pretest` hook (only `test:unit` does). Do not use Yarn Berry's
++ * `--immutable` flag with this Yarn Classic repository.
++ *
++ * createLightSqliteHarness runs migrate:sqlite:deploy against a temporary
++ * SQLite file, then initializes the real auth module from the supplied restricted
++ * environment. No HTTP route, relay listener, or production profile is started.
++ */
++
++import { randomUUID } from 'node:crypto';
++
++import { createPersistentTokenGenerator } from 'privacy-kit';
++import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
++
++import { auth } from '@/app/auth/auth';
++import { db } from '@/storage/db';
++import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
++
++import { MAX_RESTRICTED_DEVICE_GENERATION } from './restrictedDeviceClaimsContract';
++import { createPrismaRestrictedDeviceAuthority } from './restrictedDeviceEnrollmentStore';
++import { verifyRestrictedDeviceGrant } from './restrictedDeviceGrants';
++
++const incarnation = 'ca3f8c09-6cca-4042-a47a-978a8c2950ac';
++const replacementIncarnation = '3a8f4d42-2b8e-4fff-8bd2-2fc44d6655c9';
++const fixtureSecret = Buffer.alloc(32, 29).toString('base64url');
++
++let harness: LightSqliteHarness;
++
++beforeAll(async () => {
++    harness = await createLightSqliteHarness({
++        tempDirPrefix: 'happier-restricted-device-authority-',
++        initAuth: true,
++        env: {
++            HANDY_MASTER_SECRET: fixtureSecret,
++            HAPPIER_RAC_RESTRICTED_DEPLOYMENT: '1',
++            HAPPIER_RAC_AUTH_INCARNATION: incarnation,
++        },
++    });
++}, 120_000);
++
++afterEach(async () => {
++    await db.restrictedDeviceEnrollment.deleteMany();
++    await db.restrictedDeviceGrant.deleteMany();
++    await db.account.deleteMany();
++});
++
++afterAll(async () => {
++    await harness?.close();
++});
++
++function authority() {
++    const bound = auth.getRestrictedDeviceAuthority();
++    expect(bound).not.toBeNull();
++    if (!bound) throw new Error('Restricted device authority is not bound');
++    return bound;
++}
++
++async function createAccount() {
++    return await db.account.create({ data: { publicKey: randomUUID() } });
++}
++
++async function enroll(accountId: string, kind: 'phone' | 'host') {
++    return await authority().createEnrollment({ accountId, kind });
++}
++
++async function redeem(accountId: string, secret: string, expectedKind: 'phone' | 'host') {
++    return await authority().redeemEnrollment({ accountId, secret, expectedKind });
++}
++
++async function enrollAndRedeem(accountId: string, kind: 'phone' | 'host') {
++    const pending = await enroll(accountId, kind);
++    const grant = await redeem(accountId, pending.secret, kind);
++    return { pending, grant };
++}
++
++function grantLookup(id: string) {
++    return db.restrictedDeviceGrant.findUnique({ where: { id } });
++}
++
++describe('restricted device authority (SQLite integration)', () => {
++    it('commits one redemption, fails closed on a lost response, and recovers the orphan grant', async () => {
++        const account = await createAccount();
++        const pending = await enroll(account.id, 'phone');
++        const committed = await redeem(account.id, pending.secret, 'phone');
++
++        // Simulate a lost response: retry with only the client-visible secret.
++        await expect(redeem(account.id, pending.secret, 'phone')).rejects
++            .toMatchObject({ code: 'enrollment-not-usable' });
++        const grants = await db.restrictedDeviceGrant.findMany({ where: { accountId: account.id } });
++        expect(grants).toHaveLength(1);
++        expect(grants[0]).toMatchObject({
++            id: committed.grantId,
++            kind: 'phone',
++            generation: 1,
++            revokedAt: null,
++        });
++        const enrollment = await db.restrictedDeviceEnrollment.findUnique({
++            where: { id: pending.enrollmentId },
++        });
++        expect(enrollment).toMatchObject({
++            consumedAt: expect.any(Date),
++            redeemedGrantId: committed.grantId,
++        });
++
++        const recovery = await authority().readEnrollmentRecovery({
++            accountId: account.id,
++            enrollmentId: pending.enrollmentId,
++        });
++        expect(recovery).toMatchObject({
++            state: 'redeemed',
++            grant: { grantId: committed.grantId, revokedAt: null },
++        });
++        expect(JSON.stringify(recovery)).not.toContain(pending.secret);
++
++        await expect(authority().revokeGrant({
++            accountId: account.id,
++            grantId: committed.grantId,
++        })).resolves.toBe(true);
++        const fresh = await enrollAndRedeem(account.id, 'phone');
++        expect(fresh.grant.grantId).not.toBe(committed.grantId);
++        expect(await db.restrictedDeviceGrant.count({ where: { accountId: account.id } })).toBe(2);
++    });
++
++    it('issues a restricted token accepted by the actual verifier and denies signed legacy tokens', async () => {
++        const account = await createAccount();
++        const { grant } = await enrollAndRedeem(account.id, 'phone');
++        const token = await auth.createRestrictedDeviceToken(account.id, grant.grantId);
++
++        await expect(auth.verifyToken(token)).resolves.toMatchObject({
++            userId: account.id,
++            deviceGrant: { grantId: grant.grantId, generation: 1, kind: 'phone' },
++        });
++
++        const legacy = await createPersistentTokenGenerator({ service: 'handy', seed: fixtureSecret });
++        const issuedAtMs = Date.now();
++        const legacyToken = await legacy.new({ user: account.id });
++        const legacyClaimToken = await legacy.new({
++            user: account.id,
++            extras: {
++                format: 'restricted-device-v1',
++                authorityIncarnation: incarnation,
++                accountId: account.id,
++                grantId: grant.grantId,
++                grantGeneration: 1,
++                kind: 'phone',
++                issuedAtMs,
++                expiresAtMs: issuedAtMs + 60_000,
++            },
++        });
++        await expect(auth.verifyToken(legacyToken)).resolves.toBeNull();
++        await expect(auth.verifyToken(legacyClaimToken)).resolves.toBeNull();
++        await expect(auth.createToken(account.id)).rejects.toThrow('local device enrollment');
++    });
++
++    it('selectively revokes phones and a host without crossing expected kinds', async () => {
++        const account = await createAccount();
++        const phoneA = await enrollAndRedeem(account.id, 'phone');
++        const phoneB = await enrollAndRedeem(account.id, 'phone');
++        const host = await enrollAndRedeem(account.id, 'host');
++        const tokens = {
++            phoneA: await auth.createRestrictedDeviceToken(account.id, phoneA.grant.grantId),
++            phoneB: await auth.createRestrictedDeviceToken(account.id, phoneB.grant.grantId),
++            host: await auth.createRestrictedDeviceToken(account.id, host.grant.grantId),
++        };
++        for (const token of Object.values(tokens)) {
++            await expect(auth.verifyToken(token)).resolves.not.toBeNull();
++        }
++
++        const hostPending = await enroll(account.id, 'host');
++        await expect(redeem(account.id, hostPending.secret, 'phone')).rejects
++            .toMatchObject({ code: 'enrollment-not-usable' });
++        expect(await db.restrictedDeviceEnrollment.findUnique({
++            where: { id: hostPending.enrollmentId },
++        })).toMatchObject({ consumedAt: null });
++
++        await expect(authority().revokeGrant({
++            accountId: account.id,
++            grantId: phoneA.grant.grantId,
++        })).resolves.toBe(true);
++        await expect(authority().revokeGrant({
++            accountId: account.id,
++            grantId: host.grant.grantId,
++        })).resolves.toBe(true);
++        await expect(auth.verifyToken(tokens.phoneA)).resolves.toBeNull();
++        await expect(auth.verifyToken(tokens.host)).resolves.toBeNull();
++        await expect(auth.verifyToken(tokens.phoneB)).resolves.toMatchObject({
++            deviceGrant: { grantId: phoneB.grant.grantId, kind: 'phone' },
++        });
++
++        await expect(db.restrictedDeviceGrant.findUnique({ where: { id: phoneA.grant.grantId } }))
++            .resolves.toMatchObject({ generation: 2, revokedAt: expect.any(Date) });
++        await expect(db.restrictedDeviceGrant.findUnique({ where: { id: host.grant.grantId } }))
++            .resolves.toMatchObject({ generation: 2, revokedAt: expect.any(Date) });
++        await expect(db.restrictedDeviceGrant.findUnique({ where: { id: phoneB.grant.grantId } }))
++            .resolves.toMatchObject({ generation: 1, revokedAt: null });
++    });
++
++    it('revokes a terminal-generation row through the actual Prisma path without overflow', async () => {
++        const account = await createAccount();
++        const { grant } = await enrollAndRedeem(account.id, 'phone');
++        const token = await auth.createRestrictedDeviceToken(account.id, grant.grantId);
++        await db.restrictedDeviceGrant.update({
++            where: { id: grant.grantId },
++            data: { generation: MAX_RESTRICTED_DEVICE_GENERATION },
++        });
++
++        await expect(authority().revokeGrant({
++            accountId: account.id,
++            grantId: grant.grantId,
++        })).resolves.toBe(true);
++        await expect(authority().revokeGrant({
++            accountId: account.id,
++            grantId: grant.grantId,
++        })).resolves.toBe(false);
++        await expect(db.restrictedDeviceGrant.findUnique({ where: { id: grant.grantId } }))
++            .resolves.toMatchObject({
++                generation: MAX_RESTRICTED_DEVICE_GENERATION,
++                revokedAt: expect.any(Date),
++            });
++        await expect(auth.verifyToken(token)).resolves.toBeNull();
++    });
++
++    it('gives no restore credit across a synthetic incarnation rotation', async () => {
++        const account = await createAccount();
++        const current = await enrollAndRedeem(account.id, 'phone');
++        const token = await auth.createRestrictedDeviceToken(account.id, current.grant.grantId);
++        await expect(auth.verifyToken(token)).resolves.toMatchObject({
++            deviceGrant: { grantId: current.grant.grantId },
++        });
++        const pending = await enroll(account.id, 'phone');
++
++        const rotated = createPrismaRestrictedDeviceAuthority({
++            authorityIncarnation: replacementIncarnation,
++        });
++        await expect(rotated.readGrantStatus({
++            accountId: account.id,
++            grantId: current.grant.grantId,
++        })).resolves.toBe('restore-required');
++        await expect(rotated.buildGrantClaims({
++            accountId: account.id,
++            grantId: current.grant.grantId,
++        })).rejects.toMatchObject({ code: 'restore-required' });
++        await expect(rotated.redeemEnrollment({
++            accountId: account.id,
++            secret: pending.secret,
++            expectedKind: 'phone',
++        })).rejects.toMatchObject({ code: 'enrollment-not-usable' });
++        await expect(rotated.readEnrollmentRecovery({
++            accountId: account.id,
++            enrollmentId: pending.enrollmentId,
++        })).resolves.toBeNull();
++
++        const claims = await authority().buildGrantClaims({
++            accountId: account.id,
++            grantId: current.grant.grantId,
++        });
++        await expect(verifyRestrictedDeviceGrant({
++            authorityIncarnation: replacementIncarnation,
++            userId: account.id,
++            signedExtras: claims,
++            nowMs: Date.now(),
++            lookupGrant: grantLookup,
++        })).resolves.toBeNull();
++
++        await expect(db.restrictedDeviceGrant.findUnique({ where: { id: current.grant.grantId } }))
++            .resolves.toMatchObject({ generation: 1, revokedAt: null });
++        await expect(db.restrictedDeviceEnrollment.findUnique({ where: { id: pending.enrollmentId } }))
++            .resolves.toMatchObject({ consumedAt: null, redeemedGrantId: null });
++        expect(await db.restrictedDeviceGrant.count({ where: { accountId: account.id } })).toBe(1);
++
++        // Rotation requires a fresh pairing; it must not reuse the old grant.
++        const fresh = await rotated.createEnrollment({ accountId: account.id, kind: 'phone' });
++        const freshGrant = await rotated.redeemEnrollment({
++            accountId: account.id,
++            secret: fresh.secret,
++            expectedKind: 'phone',
++        });
++        expect(freshGrant.grantId).not.toBe(current.grant.grantId);
++        expect(await db.restrictedDeviceGrant.count({
++            where: { accountId: account.id, authorityIncarnation: replacementIncarnation },
++        })).toBe(1);
++        await expect(db.restrictedDeviceGrant.findUnique({ where: { id: current.grant.grantId } }))
++            .resolves.toMatchObject({ generation: 1, revokedAt: null });
++        // The active issuer is unchanged; rotation is synthetic and must not
++        // revoke or re-credit the original grant.
++        await expect(auth.verifyToken(token)).resolves.toMatchObject({
++            deviceGrant: { grantId: current.grant.grantId },
++        });
++    });
++});
+diff --git a/apps/server/sources/app/auth/restrictedDeviceAuthority.ts b/apps/server/sources/app/auth/restrictedDeviceAuthority.ts
+new file mode 100644
+index 0000000..6c50edd
+--- /dev/null
++++ b/apps/server/sources/app/auth/restrictedDeviceAuthority.ts
+@@ -0,0 +1,289 @@
++import {
++    isBoundedRestrictedDeviceIdentifier,
++    isRestrictedDeviceKind,
++    type RestrictedDeviceGrantClaims,
++    type RestrictedDeviceKind,
++} from './restrictedDeviceClaimsContract';
++import {
++    RestrictedDeviceGrantLifecycleError,
++    buildRestrictedDeviceGrantClaims,
++    createPendingEnrollment,
++    readRestrictedDeviceGrantStatus,
++    redeemPendingEnrollment,
++    requireRestrictedDeviceAuthorityIncarnation,
++    revokeRestrictedDeviceGrant,
++    type RestrictedDeviceEnrollmentRecord,
++    type RestrictedDeviceGrantRecord,
++    type RestrictedDeviceGrantStatus,
++} from './restrictedDeviceEnrollment';
++
++export const MAX_PENDING_ENROLLMENTS_PER_ACCOUNT = 5;
++export const DEFAULT_ENROLLMENT_RECOVERY_LIMIT = 10;
++export const MAX_ENROLLMENT_RECOVERY_LIMIT = 50;
++export const DEFAULT_ENROLLMENT_CLEANUP_LIMIT = 50;
++export const MAX_ENROLLMENT_CLEANUP_LIMIT = 500;
++
++export type RecoveryEnrollmentRow = Readonly<{
++    id: string;
++    accountId: string;
++    authorityIncarnation: string;
++    kind: string;
++    createdAt: Date;
++    expiresAt: Date;
++    consumedAt: Date | null;
++    redeemedGrantId: string | null;
++    grant: RestrictedDeviceGrantRecord | null;
++}>;
++
++export type RedactedEnrollmentRecovery = Readonly<{
++    enrollmentId: string;
++    kind: string;
++    state: 'pending' | 'redeemed' | 'expired' | 'incomplete';
++    createdAt: Date;
++    expiresAt: Date;
++    consumedAt: Date | null;
++    grant: Readonly<{
++        grantId: string;
++        generation: number;
++        createdAt: Date;
++        revokedAt: Date | null;
++    }> | null;
++}>;
++
++export type RestrictedDeviceAuthorityStore = Readonly<{
++    createEnrollment(input: Readonly<{
++        record: RestrictedDeviceEnrollmentRecord;
++        maxPending: number;
++        clock: () => Date;
++    }>): Promise<Readonly<{ id: string; expiresAt: Date }>>;
++    redeemEnrollment(input: Readonly<{
++        secretHash: string;
++        accountId: string;
++        authorityIncarnation: string;
++        expectedKind: RestrictedDeviceKind;
++        clock: () => Date;
++    }>): Promise<Readonly<{ grantId: string; generation: number; kind: string }> | null>;
++    findGrant(id: string): Promise<RestrictedDeviceGrantRecord | null>;
++    findEnrollment(input: Readonly<{
++        id: string;
++        accountId: string;
++        authorityIncarnation: string;
++    }>): Promise<RecoveryEnrollmentRow | null>;
++    listEnrollments(input: Readonly<{
++        accountId: string;
++        authorityIncarnation: string;
++        limit: number;
++    }>): Promise<ReadonlyArray<RecoveryEnrollmentRow>>;
++    revokeGrantConditionally(input: Readonly<{
++        accountId: string;
++        authorityIncarnation: string;
++        grantId: string;
++        now: Date;
++    }>): Promise<number>;
++    deleteExpiredUnusedEnrollments(input: Readonly<{
++        authorityIncarnation: string;
++        now: Date;
++        limit: number;
++    }>): Promise<number>;
++}>;
++
++export type RestrictedDeviceAuthority = Readonly<{
++    createEnrollment(input: Readonly<{
++        accountId: string;
++        kind: RestrictedDeviceKind;
++        ttlMs?: number;
++    }>): Promise<Readonly<{ enrollmentId: string; secret: string; expiresAt: Date }>>;
++    redeemEnrollment(input: Readonly<{
++        accountId: string;
++        secret: string;
++        expectedKind: RestrictedDeviceKind;
++    }>): Promise<Readonly<{ grantId: string; generation: number; kind: RestrictedDeviceKind }>>;
++    readEnrollmentRecovery(input: Readonly<{
++        accountId: string;
++        enrollmentId: string;
++    }>): Promise<RedactedEnrollmentRecovery | null>;
++    listRecentEnrollments(input: Readonly<{
++        accountId: string;
++        limit?: number;
++    }>): Promise<ReadonlyArray<RedactedEnrollmentRecovery>>;
++    readGrantStatus(input: Readonly<{ accountId: string; grantId: string }>): Promise<RestrictedDeviceGrantStatus>;
++    revokeGrant(input: Readonly<{ accountId: string; grantId: string }>): Promise<boolean>;
++    buildGrantClaims(input: Readonly<{
++        accountId: string;
++        grantId: string;
++        tokenTtlMs?: number;
++    }>): Promise<RestrictedDeviceGrantClaims>;
++    cleanupExpiredEnrollments(input?: Readonly<{ limit?: number }>): Promise<number>;
++}>;
++
++function readClock(clock: () => Date): Date {
++    const now = clock();
++    if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
++        throw new RestrictedDeviceGrantLifecycleError('invalid-request', 'Device authority clock is not usable');
++    }
++    return now;
++}
++
++function readLimit(value: unknown, fallback: number, maximum: number, label: string): number {
++    const limit = value === undefined ? fallback : value;
++    if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > maximum) {
++        throw new RestrictedDeviceGrantLifecycleError(
++            'invalid-request',
++            `${label} must be between 1 and ${maximum}`,
++        );
++    }
++    return limit;
++}
++
++function toRecovery(row: RecoveryEnrollmentRow, now: Date): RedactedEnrollmentRecovery {
++    const grant = row.grant
++        && row.grant.accountId === row.accountId
++        && row.grant.authorityIncarnation === row.authorityIncarnation
++        ? row.grant
++        : null;
++    const consistentKind = isRestrictedDeviceKind(row.kind);
++    const consumed = row.consumedAt !== null;
++    const inconsistent = !consistentKind
++        || (consumed && (grant === null || row.redeemedGrantId === null))
++        || (!consumed && (grant !== null || row.redeemedGrantId !== null));
++    const state: RedactedEnrollmentRecovery['state'] = inconsistent
++        ? 'incomplete'
++        : consumed
++            ? 'redeemed'
++            : row.expiresAt.getTime() <= now.getTime()
++                ? 'expired'
++                : 'pending';
++    return {
++        enrollmentId: row.id,
++        kind: row.kind,
++        state,
++        createdAt: row.createdAt,
++        expiresAt: row.expiresAt,
++        consumedAt: row.consumedAt,
++        grant: grant
++            ? {
++                grantId: grant.id,
++                generation: grant.generation,
++                createdAt: grant.createdAt,
++                revokedAt: grant.revokedAt,
++            }
++            : null,
++    };
++}
++
++/**
++ * Bind one captured issuer incarnation to the persistence layer. Production
++ * callers construct this during server init and never accept an incarnation
++ * from request data. Redemption always carries the ingress-authorized expected
++ * kind; the store applies it inside the atomic claim and checks expiry at
++ * transaction admission.
++ */
++export function createRestrictedDeviceAuthority(options: Readonly<{
++    authorityIncarnation: string;
++    store: RestrictedDeviceAuthorityStore;
++    clock?: () => Date;
++}>): RestrictedDeviceAuthority {
++    const authorityIncarnation = requireRestrictedDeviceAuthorityIncarnation(options.authorityIncarnation);
++    const store = options.store;
++    const clock = options.clock ?? (() => new Date());
++
++    return {
++        async createEnrollment(input) {
++            const proposedAt = readClock(clock);
++            const pending = createPendingEnrollment({
++                accountId: input.accountId,
++                authorityIncarnation,
++                kind: input.kind,
++                nowMs: proposedAt.getTime(),
++                ttlMs: input.ttlMs,
++            });
++            const created = await store.createEnrollment({
++                record: pending.record,
++                maxPending: MAX_PENDING_ENROLLMENTS_PER_ACCOUNT,
++                clock,
++            });
++            return { enrollmentId: created.id, secret: pending.secret, expiresAt: created.expiresAt };
++        },
++
++        async redeemEnrollment(input) {
++            return await redeemPendingEnrollment({
++                accountId: input.accountId,
++                authorityIncarnation,
++                secret: input.secret,
++                expectedKind: input.expectedKind,
++                redeemAtomically: async claim => await store.redeemEnrollment({ ...claim, clock }),
++            });
++        },
++
++        async readEnrollmentRecovery(input) {
++            if (!isBoundedRestrictedDeviceIdentifier(input.enrollmentId)) {
++                throw new RestrictedDeviceGrantLifecycleError('invalid-request', 'Device enrollment id is not usable');
++            }
++            const row = await store.findEnrollment({
++                id: input.enrollmentId,
++                accountId: input.accountId,
++                authorityIncarnation,
++            });
++            return row ? toRecovery(row, readClock(clock)) : null;
++        },
++
++        async listRecentEnrollments(input) {
++            const rows = await store.listEnrollments({
++                accountId: input.accountId,
++                authorityIncarnation,
++                limit: readLimit(
++                    input.limit,
++                    DEFAULT_ENROLLMENT_RECOVERY_LIMIT,
++                    MAX_ENROLLMENT_RECOVERY_LIMIT,
++                    'Enrollment recovery limit',
++                ),
++            });
++            const now = readClock(clock);
++            return rows.map(row => toRecovery(row, now));
++        },
++
++        async readGrantStatus(input) {
++            return await readRestrictedDeviceGrantStatus({
++                authorityIncarnation,
++                accountId: input.accountId,
++                grantId: input.grantId,
++                nowMs: readClock(clock).getTime(),
++                lookupGrant: async id => await store.findGrant(id),
++            });
++        },
++
++        async revokeGrant(input) {
++            return await revokeRestrictedDeviceGrant({
++                authorityIncarnation,
++                accountId: input.accountId,
++                grantId: input.grantId,
++                nowMs: readClock(clock).getTime(),
++                revokeConditionally: async claim => await store.revokeGrantConditionally(claim),
++            });
++        },
++
++        async buildGrantClaims(input) {
++            const grant = await store.findGrant(input.grantId);
++            return buildRestrictedDeviceGrantClaims({
++                authorityIncarnation,
++                accountId: input.accountId,
++                grant,
++                nowMs: readClock(clock).getTime(),
++                tokenTtlMs: input.tokenTtlMs,
++            });
++        },
++
++        async cleanupExpiredEnrollments(input) {
++            return await store.deleteExpiredUnusedEnrollments({
++                authorityIncarnation,
++                now: readClock(clock),
++                limit: readLimit(
++                    input?.limit,
++                    DEFAULT_ENROLLMENT_CLEANUP_LIMIT,
++                    MAX_ENROLLMENT_CLEANUP_LIMIT,
++                    'Enrollment cleanup limit',
++                ),
++            });
++        },
++    };
++}
+diff --git a/apps/server/sources/app/auth/restrictedDeviceClaimsContract.ts b/apps/server/sources/app/auth/restrictedDeviceClaimsContract.ts
+new file mode 100644
+index 0000000..0223abe
+--- /dev/null
++++ b/apps/server/sources/app/auth/restrictedDeviceClaimsContract.ts
+@@ -0,0 +1,104 @@
++/**
++ * Single dependency-free source for restricted device claim shape and bounds.
++ *
++ * The verifier and the issuer both use this module so a produced claim cannot
++ * drift from the accepted claim schema. Keep it free of runtime imports so the
++ * contract can be exercised without the server dependency tree.
++ */
++
++export const RESTRICTED_DEVICE_CLAIM_FORMAT = 'restricted-device-v1' as const;
++export const RESTRICTED_DEVICE_KINDS = ['phone', 'host'] as const;
++export type RestrictedDeviceKind = (typeof RESTRICTED_DEVICE_KINDS)[number];
++
++export const MAX_RESTRICTED_DEVICE_GENERATION = 2_147_483_647;
++export const MAX_RESTRICTED_DEVICE_IDENTIFIER_LENGTH = 256;
++export const MAX_DEVICE_CLAIM_LIFETIME_MS = 7 * 24 * 60 * 60_000;
++
++// RFC 9562 variants and versions: keeps the verifier's UUID strictness.
++export const AUTHORITY_INCARNATION_PATTERN =
++    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++
++const CLAIM_KEYS = [
++    'format',
++    'authorityIncarnation',
++    'accountId',
++    'grantId',
++    'grantGeneration',
++    'kind',
++    'issuedAtMs',
++    'expiresAtMs',
++] as const;
++
++export type RestrictedDeviceGrantClaims = Readonly<{
++    format: typeof RESTRICTED_DEVICE_CLAIM_FORMAT;
++    authorityIncarnation: string;
++    accountId: string;
++    grantId: string;
++    grantGeneration: number;
++    kind: RestrictedDeviceKind;
++    issuedAtMs: number;
++    expiresAtMs: number;
++}>;
++
++export type RestrictedDeviceClaimTimes = Readonly<{
++    issuedAtMs: number;
++    expiresAtMs: number;
++}>;
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++    return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++
++export function isBoundedRestrictedDeviceIdentifier(value: unknown): value is string {
++    return typeof value === 'string'
++        && value.length > 0
++        && value.length <= MAX_RESTRICTED_DEVICE_IDENTIFIER_LENGTH
++        && !value.includes('\0');
++}
++
++export function isRestrictedAuthorityIncarnation(value: unknown): value is string {
++    return typeof value === 'string' && AUTHORITY_INCARNATION_PATTERN.test(value);
++}
++
++export function isRestrictedDeviceKind(value: unknown): value is RestrictedDeviceKind {
++    return value === 'phone' || value === 'host';
++}
++
++/** Strict parser: exactly the known keys, no extensions, bounded values. */
++export function parseRestrictedDeviceGrantClaims(value: unknown): RestrictedDeviceGrantClaims | null {
++    if (!isRecord(value)) return null;
++    const keys = Object.keys(value);
++    if (keys.length !== CLAIM_KEYS.length || !CLAIM_KEYS.every(key => Object.hasOwn(value, key))) return null;
++    if (value.format !== RESTRICTED_DEVICE_CLAIM_FORMAT) return null;
++    if (!isRestrictedAuthorityIncarnation(value.authorityIncarnation)) return null;
++    if (!isBoundedRestrictedDeviceIdentifier(value.accountId)) return null;
++    if (!isBoundedRestrictedDeviceIdentifier(value.grantId)) return null;
++    if (typeof value.grantGeneration !== 'number'
++        || !Number.isSafeInteger(value.grantGeneration)
++        || value.grantGeneration < 1
++        || value.grantGeneration > MAX_RESTRICTED_DEVICE_GENERATION) return null;
++    if (!isRestrictedDeviceKind(value.kind)) return null;
++    if (typeof value.issuedAtMs !== 'number' || !Number.isSafeInteger(value.issuedAtMs) || value.issuedAtMs < 0) return null;
++    if (typeof value.expiresAtMs !== 'number' || !Number.isSafeInteger(value.expiresAtMs) || value.expiresAtMs <= 0) return null;
++
++    return {
++        format: RESTRICTED_DEVICE_CLAIM_FORMAT,
++        authorityIncarnation: value.authorityIncarnation,
++        accountId: value.accountId,
++        grantId: value.grantId,
++        grantGeneration: value.grantGeneration,
++        kind: value.kind,
++        issuedAtMs: value.issuedAtMs,
++        expiresAtMs: value.expiresAtMs,
++    };
++}
++
++/** Date bound shared by issuance and verification. */
++export function areRestrictedDeviceClaimTimesUsable(claims: RestrictedDeviceClaimTimes, nowMs: number): boolean {
++    if (!Number.isSafeInteger(nowMs) || nowMs < 0) return false;
++    const { issuedAtMs, expiresAtMs } = claims;
++    if (!Number.isSafeInteger(issuedAtMs) || !Number.isSafeInteger(expiresAtMs)) return false;
++    if (issuedAtMs < 0 || expiresAtMs <= 0) return false;
++    if (issuedAtMs > nowMs || expiresAtMs <= nowMs || expiresAtMs <= issuedAtMs) return false;
++    return expiresAtMs - issuedAtMs <= MAX_DEVICE_CLAIM_LIFETIME_MS;
++}
+diff --git a/apps/server/sources/app/auth/restrictedDeviceEnrollment.test.ts b/apps/server/sources/app/auth/restrictedDeviceEnrollment.test.ts
+new file mode 100644
+index 0000000..d4c1acb
+--- /dev/null
++++ b/apps/server/sources/app/auth/restrictedDeviceEnrollment.test.ts
+@@ -0,0 +1,436 @@
++import { describe, expect, it } from 'vitest';
++
++import {
++    MAX_PENDING_ENROLLMENTS_PER_ACCOUNT,
++    createRestrictedDeviceAuthority,
++    type RecoveryEnrollmentRow,
++    type RestrictedDeviceAuthorityStore,
++} from './restrictedDeviceAuthority';
++import {
++    MAX_DEVICE_CLAIM_LIFETIME_MS,
++    MAX_RESTRICTED_DEVICE_GENERATION,
++    areRestrictedDeviceClaimTimesUsable,
++    parseRestrictedDeviceGrantClaims,
++} from './restrictedDeviceClaimsContract';
++import {
++    DEFAULT_DEVICE_ENROLLMENT_TTL_MS,
++    MAX_DEVICE_ENROLLMENT_TTL_MS,
++    MIN_DEVICE_ENROLLMENT_TTL_MS,
++    RestrictedDeviceGrantLifecycleError,
++    buildRestrictedDeviceGrantClaims,
++    createPendingEnrollment,
++    hashDeviceEnrollmentSecret,
++    type RestrictedDeviceKind,
++} from './restrictedDeviceEnrollment';
++
++const authorityIncarnation = 'ca3f8c09-6cca-4042-a47a-978a8c2950ac';
++const replacementIncarnation = '3a8f4d42-2b8e-4fff-8bd2-2fc44d6655c9';
++const accountId = 'fixture-account';
++const startMs = 1_000_000;
++
++type MutableEnrollment = {
++    id: string;
++    accountId: string;
++    authorityIncarnation: string;
++    kind: RestrictedDeviceKind;
++    secretHash: string;
++    createdAt: Date;
++    expiresAt: Date;
++    consumedAt: Date | null;
++    redeemedGrantId: string | null;
++};
++
++type MutableGrant = {
++    id: string;
++    accountId: string;
++    authorityIncarnation: string;
++    kind: RestrictedDeviceKind;
++    generation: number;
++    createdAt: Date;
++    revokedAt: Date | null;
++};
++
++function createClock(start: number) {
++    let current = start;
++    return {
++        clock: () => new Date(current),
++        set: (value: number) => { current = value; },
++        advance: (delta: number) => { current += delta; },
++    };
++}
++
++function createFixtureStore() {
++    const enrollments: MutableEnrollment[] = [];
++    const grants: MutableGrant[] = [];
++    let sequence = 0;
++
++    function toRow(enrollment: MutableEnrollment): RecoveryEnrollmentRow {
++        const grant = enrollment.redeemedGrantId
++            ? grants.find(candidate => candidate.id === enrollment.redeemedGrantId) ?? null
++            : null;
++        return {
++            id: enrollment.id,
++            accountId: enrollment.accountId,
++            authorityIncarnation: enrollment.authorityIncarnation,
++            kind: enrollment.kind,
++            createdAt: enrollment.createdAt,
++            expiresAt: enrollment.expiresAt,
++            consumedAt: enrollment.consumedAt,
++            redeemedGrantId: enrollment.redeemedGrantId,
++            grant,
++        };
++    }
++
++    const store: RestrictedDeviceAuthorityStore = {
++        async createEnrollment({ record, maxPending, clock }) {
++            const admittedAt = clock();
++            for (let index = enrollments.length - 1; index >= 0; index -= 1) {
++                const candidate = enrollments[index]!;
++                if (candidate.accountId === record.accountId
++                    && candidate.authorityIncarnation === record.authorityIncarnation
++                    && candidate.consumedAt === null
++                    && candidate.expiresAt.getTime() <= admittedAt.getTime()) {
++                    enrollments.splice(index, 1);
++                }
++            }
++            const pending = enrollments.filter(candidate => (
++                candidate.accountId === record.accountId
++                && candidate.authorityIncarnation === record.authorityIncarnation
++                && candidate.consumedAt === null
++                && candidate.expiresAt.getTime() > admittedAt.getTime()
++            )).length;
++            if (pending >= maxPending) {
++                throw new RestrictedDeviceGrantLifecycleError(
++                    'enrollment-limit',
++                    'fixture enrollment limit',
++                );
++            }
++            const id = `enrollment-${++sequence}`;
++            enrollments.push({ ...record, id, consumedAt: null, redeemedGrantId: null });
++            return { id, expiresAt: record.expiresAt };
++        },
++        async redeemEnrollment({ secretHash, accountId: requestedAccount, authorityIncarnation: requestedIncarnation, expectedKind, clock }) {
++            const admittedAt = clock();
++            const enrollment = enrollments.find(candidate => candidate.secretHash === secretHash);
++            if (!enrollment
++                || enrollment.accountId !== requestedAccount
++                || enrollment.authorityIncarnation !== requestedIncarnation
++                || enrollment.kind !== expectedKind
++                || enrollment.consumedAt !== null
++                || enrollment.expiresAt.getTime() <= admittedAt.getTime()) return null;
++            enrollment.consumedAt = admittedAt;
++            const grant: MutableGrant = {
++                id: `grant-${grants.length + 1}`,
++                accountId: enrollment.accountId,
++                authorityIncarnation: enrollment.authorityIncarnation,
++                kind: expectedKind,
++                generation: 1,
++                createdAt: admittedAt,
++                revokedAt: null,
++            };
++            grants.push(grant);
++            enrollment.redeemedGrantId = grant.id;
++            return { grantId: grant.id, generation: grant.generation, kind: expectedKind };
++        },
++        async findGrant(id) {
++            return grants.find(grant => grant.id === id) ?? null;
++        },
++        async findEnrollment({ id, accountId: requestedAccount, authorityIncarnation: requestedIncarnation }) {
++            const enrollment = enrollments.find(candidate => candidate.id === id);
++            if (!enrollment
++                || enrollment.accountId !== requestedAccount
++                || enrollment.authorityIncarnation !== requestedIncarnation) return null;
++            return toRow(enrollment);
++        },
++        async listEnrollments({ accountId: requestedAccount, authorityIncarnation: requestedIncarnation, limit }) {
++            return enrollments
++                .filter(candidate => candidate.accountId === requestedAccount
++                    && candidate.authorityIncarnation === requestedIncarnation)
++                .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
++                .slice(0, limit)
++                .map(toRow);
++        },
++        async revokeGrantConditionally({ accountId: requestedAccount, authorityIncarnation: requestedIncarnation, grantId, now }) {
++            const grant = grants.find(candidate => candidate.id === grantId);
++            if (!grant
++                || grant.accountId !== requestedAccount
++                || grant.authorityIncarnation !== requestedIncarnation
++                || grant.revokedAt !== null) return 0;
++            grant.revokedAt = now;
++            if (grant.generation < MAX_RESTRICTED_DEVICE_GENERATION) grant.generation += 1;
++            return 1;
++        },
++        async deleteExpiredUnusedEnrollments({ authorityIncarnation: requestedIncarnation, now, limit }) {
++            let deleted = 0;
++            for (let index = 0; index < enrollments.length && deleted < limit; index += 1) {
++                const candidate = enrollments[index]!;
++                if (candidate.authorityIncarnation === requestedIncarnation
++                    && candidate.consumedAt === null
++                    && candidate.expiresAt.getTime() <= now.getTime()) {
++                    enrollments.splice(index, 1);
++                    index -= 1;
++                    deleted += 1;
++                }
++            }
++            return deleted;
++        },
++    };
++
++    return { store, enrollments, grants };
++}
++
++function setup(incarnation = authorityIncarnation) {
++    const fixture = createFixtureStore();
++    const time = createClock(startMs);
++    const authority = createRestrictedDeviceAuthority({
++        authorityIncarnation: incarnation,
++        store: fixture.store,
++        clock: time.clock,
++    });
++    return { ...fixture, ...time, authority };
++}
++
++function errorCode(run: () => unknown): string | undefined {
++    try {
++        run();
++    } catch (error) {
++        return (error as { code?: string }).code;
++    }
++    return undefined;
++}
++
++async function rejectionCode(promise: Promise<unknown>): Promise<string | undefined> {
++    try {
++        await promise;
++    } catch (error) {
++        return (error as { code?: string }).code;
++    }
++    return undefined;
++}
++
++async function redeem(ctx: ReturnType<typeof setup>, secret: string, kind: RestrictedDeviceKind = 'phone') {
++    return await ctx.authority.redeemEnrollment({ accountId, secret, expectedKind: kind });
++}
++
++async function enrollAndRedeem(ctx: ReturnType<typeof setup>, kind: RestrictedDeviceKind = 'phone') {
++    const enrollment = await ctx.authority.createEnrollment({ accountId, kind });
++    const grant = await redeem(ctx, enrollment.secret, kind);
++    return { enrollment, grant };
++}
++
++describe('restricted device authority lifecycle', () => {
++    it('persists only a one-time secret hash and redeems it into one grant', async () => {
++        const ctx = setup();
++        const enrollment = await ctx.authority.createEnrollment({ accountId, kind: 'phone' });
++        const stored = ctx.enrollments[0]!;
++
++        expect(stored.secretHash).toBe(hashDeviceEnrollmentSecret(enrollment.secret));
++        expect(stored.secretHash).not.toBe(enrollment.secret);
++        expect(JSON.stringify(stored)).not.toContain(enrollment.secret);
++        expect(stored.expiresAt.getTime() - stored.createdAt.getTime()).toBe(DEFAULT_DEVICE_ENROLLMENT_TTL_MS);
++
++        await expect(redeem(ctx, enrollment.secret)).resolves.toEqual({
++            grantId: 'grant-1', generation: 1, kind: 'phone',
++        });
++        expect(ctx.grants).toHaveLength(1);
++        expect(stored.consumedAt?.getTime()).toBe(startMs);
++        expect(stored.redeemedGrantId).toBe('grant-1');
++
++        await expect(redeem(ctx, enrollment.secret)).rejects.toMatchObject({ code: 'enrollment-not-usable' });
++        expect(ctx.grants).toHaveLength(1);
++    });
++
++    it('carries the ingress-authorized expected kind into the atomic claim', async () => {
++        const ctx = setup();
++        const hostEnrollment = await ctx.authority.createEnrollment({ accountId, kind: 'host' });
++
++        await expect(redeem(ctx, hostEnrollment.secret, 'phone')).rejects
++            .toMatchObject({ code: 'enrollment-not-usable' });
++        expect(ctx.grants).toHaveLength(0);
++        expect(ctx.enrollments[0]!.consumedAt).toBeNull();
++
++        await expect(redeem(ctx, hostEnrollment.secret, 'host')).resolves
++            .toMatchObject({ kind: 'host' });
++        expect(ctx.grants[0]!.kind).toBe('host');
++
++        const phoneEnrollment = await ctx.authority.createEnrollment({ accountId, kind: 'phone' });
++        await expect(redeem(ctx, phoneEnrollment.secret, 'host')).rejects
++            .toMatchObject({ code: 'enrollment-not-usable' });
++        expect(ctx.grants).toHaveLength(1);
++    });
++
++    it('checks expiry at store admission rather than a caller-supplied time', async () => {
++        const ctx = setup();
++        const enrollment = await ctx.authority.createEnrollment({
++            accountId,
++            kind: 'phone',
++            ttlMs: MIN_DEVICE_ENROLLMENT_TTL_MS,
++        });
++        ctx.set(startMs + MIN_DEVICE_ENROLLMENT_TTL_MS);
++        await expect(redeem(ctx, enrollment.secret)).rejects.toMatchObject({ code: 'enrollment-not-usable' });
++        expect(ctx.enrollments[0]!.consumedAt).toBeNull();
++        expect(ctx.grants).toHaveLength(0);
++    });
++
++    it('fails closed after a committed grant loses its response and supports owner recovery', async () => {
++        const ctx = setup();
++        const enrollment = await ctx.authority.createEnrollment({ accountId, kind: 'phone' });
++        const committed = await redeem(ctx, enrollment.secret);
++
++        // The client retries because the response was lost. The durable grant
++        // already exists; the retry must not replay or mint a second one.
++        await expect(redeem(ctx, enrollment.secret)).rejects.toMatchObject({ code: 'enrollment-not-usable' });
++        expect(ctx.grants).toHaveLength(1);
++
++        const recovery = await ctx.authority.readEnrollmentRecovery({
++            accountId,
++            enrollmentId: enrollment.enrollmentId,
++        });
++        expect(recovery).toMatchObject({
++            enrollmentId: enrollment.enrollmentId,
++            kind: 'phone',
++            state: 'redeemed',
++            grant: { grantId: committed.grantId, generation: 1, revokedAt: null },
++        });
++        expect(JSON.stringify(recovery)).not.toContain(enrollment.secret);
++        expect(JSON.stringify(recovery)).not.toContain('secretHash');
++        await expect(ctx.authority.listRecentEnrollments({ accountId })).resolves.toHaveLength(1);
++
++        await expect(ctx.authority.revokeGrant({ accountId, grantId: committed.grantId })).resolves.toBe(true);
++        const recovered = await ctx.authority.readEnrollmentRecovery({
++            accountId,
++            enrollmentId: enrollment.enrollmentId,
++        });
++        expect(recovered?.grant?.revokedAt).not.toBeNull();
++
++        const fresh = await ctx.authority.createEnrollment({ accountId, kind: 'phone' });
++        await expect(redeem(ctx, fresh.secret)).resolves.toMatchObject({ grantId: 'grant-2', generation: 1 });
++        expect(ctx.grants.map(grant => grant.revokedAt !== null)).toEqual([true, false]);
++    });
++
++    it('bounds pending enrollment storage and cleans only expired unused rows', async () => {
++        const ctx = setup();
++        for (let index = 0; index < MAX_PENDING_ENROLLMENTS_PER_ACCOUNT; index += 1) {
++            await ctx.authority.createEnrollment({ accountId, kind: 'phone' });
++        }
++        await expect(ctx.authority.createEnrollment({ accountId, kind: 'phone' })).rejects
++            .toMatchObject({ code: 'enrollment-limit' });
++
++        ctx.advance(MAX_DEVICE_ENROLLMENT_TTL_MS + 1);
++        await expect(ctx.authority.cleanupExpiredEnrollments()).resolves
++            .toBe(MAX_PENDING_ENROLLMENTS_PER_ACCOUNT);
++        expect(ctx.enrollments).toHaveLength(0);
++
++        const redeemed = await enrollAndRedeem(ctx);
++        await expect(ctx.authority.revokeGrant({ accountId, grantId: redeemed.grant.grantId })).resolves.toBe(true);
++        ctx.advance(MAX_DEVICE_ENROLLMENT_TTL_MS + 1);
++        await expect(ctx.authority.cleanupExpiredEnrollments()).resolves.toBe(0);
++        expect(ctx.enrollments).toHaveLength(1);
++        expect(ctx.grants).toHaveLength(1);
++        expect(ctx.grants[0]!.revokedAt).not.toBeNull();
++    });
++
++    it('revokes a terminal-generation row without integer overflow and denies stale or foreign callers', async () => {
++        const ctx = setup();
++        const { grant } = await enrollAndRedeem(ctx);
++        ctx.grants[0]!.generation = MAX_RESTRICTED_DEVICE_GENERATION;
++
++        await expect(ctx.authority.revokeGrant({ accountId, grantId: grant.grantId })).resolves.toBe(true);
++        expect(ctx.grants[0]!.generation).toBe(MAX_RESTRICTED_DEVICE_GENERATION);
++        expect(ctx.grants[0]!.revokedAt).not.toBeNull();
++        await expect(ctx.authority.revokeGrant({ accountId, grantId: grant.grantId })).resolves.toBe(false);
++        await expect(ctx.authority.buildGrantClaims({ accountId, grantId: grant.grantId })).rejects
++            .toMatchObject({ code: 'grant-revoked' });
++
++        const foreign = setup();
++        const foreignGrant = await enrollAndRedeem(foreign);
++        await expect(ctx.authority.revokeGrant({ accountId: 'other-account', grantId: foreignGrant.grant.grantId }))
++            .resolves.toBe(false);
++        const previousIncarnation = createRestrictedDeviceAuthority({
++            authorityIncarnation: replacementIncarnation,
++            store: foreign.store,
++            clock: foreign.clock,
++        });
++        await expect(previousIncarnation.revokeGrant({ accountId, grantId: foreignGrant.grant.grantId }))
++            .resolves.toBe(false);
++        expect(foreign.grants[0]!.revokedAt).toBeNull();
++    });
++
++    it('shares the strict claim parser and date bound between issuer and verifier', async () => {
++        const ctx = setup();
++        const { grant } = await enrollAndRedeem(ctx);
++        const claims = await ctx.authority.buildGrantClaims({ accountId, grantId: grant.grantId });
++
++        expect(parseRestrictedDeviceGrantClaims(claims)).toEqual(claims);
++        expect(areRestrictedDeviceClaimTimesUsable(claims, startMs)).toBe(true);
++        expect(parseRestrictedDeviceGrantClaims({ ...claims, extra: true })).toBeNull();
++        expect(parseRestrictedDeviceGrantClaims({
++            ...claims,
++            authorityIncarnation: '00000000-0000-0000-0000-000000000000',
++        })).toBeNull();
++        expect(parseRestrictedDeviceGrantClaims({ ...claims, accountId: '' })).toBeNull();
++        expect(parseRestrictedDeviceGrantClaims({ ...claims, grantGeneration: 0 })).toBeNull();
++        expect(parseRestrictedDeviceGrantClaims({ ...claims, kind: 'tablet' })).toBeNull();
++        expect(areRestrictedDeviceClaimTimesUsable({
++            issuedAtMs: startMs,
++            expiresAtMs: startMs + MAX_DEVICE_CLAIM_LIFETIME_MS + 1,
++        }, startMs)).toBe(false);
++        expect(areRestrictedDeviceClaimTimesUsable({ issuedAtMs: startMs, expiresAtMs: startMs }, startMs)).toBe(false);
++        await expect(ctx.authority.buildGrantClaims({
++            accountId,
++            grantId: grant.grantId,
++            tokenTtlMs: MAX_DEVICE_CLAIM_LIFETIME_MS + 1,
++        })).rejects.toMatchObject({ code: 'invalid-request' });
++    });
++
++    it('reports previous-incarnation grants as restore-required without mutation', async () => {
++        const ctx = setup();
++        const { grant } = await enrollAndRedeem(ctx);
++        const before = { ...ctx.grants[0]! };
++        const previousIncarnation = createRestrictedDeviceAuthority({
++            authorityIncarnation: replacementIncarnation,
++            store: ctx.store,
++            clock: ctx.clock,
++        });
++
++        await expect(previousIncarnation.readGrantStatus({ accountId, grantId: grant.grantId }))
++            .resolves.toBe('restore-required');
++        await expect(previousIncarnation.buildGrantClaims({ accountId, grantId: grant.grantId }))
++            .rejects.toMatchObject({ code: 'restore-required' });
++        expect(ctx.grants[0]).toEqual(before);
++    });
++
++    it('bounds enrollment lifetime and generated secret shape', () => {
++        const ctx = setup();
++        expect(errorCode(() => createPendingEnrollment({
++            accountId,
++            authorityIncarnation,
++            nowMs: startMs,
++            ttlMs: MIN_DEVICE_ENROLLMENT_TTL_MS - 1,
++        }))).toBe('invalid-request');
++        expect(errorCode(() => createPendingEnrollment({
++            accountId,
++            authorityIncarnation,
++            nowMs: startMs,
++            ttlMs: MAX_DEVICE_ENROLLMENT_TTL_MS + 1,
++        }))).toBe('invalid-request');
++        expect(errorCode(() => createPendingEnrollment({
++            accountId,
++            authorityIncarnation: 'not-a-uuid',
++            nowMs: startMs,
++        }))).toBe('authority-not-configured');
++        expect(errorCode(() => createPendingEnrollment({
++            accountId,
++            authorityIncarnation,
++            nowMs: startMs,
++            generateSecret: () => 'too-short',
++        }))).toBe('invalid-request');
++        expect(errorCode(() => buildRestrictedDeviceGrantClaims({
++            authorityIncarnation,
++            accountId,
++            grant: null,
++            nowMs: startMs,
++        }))).toBe('grant-not-found');
++        expect(ctx.authority).toBeDefined();
++    });
++});
+diff --git a/apps/server/sources/app/auth/restrictedDeviceEnrollment.ts b/apps/server/sources/app/auth/restrictedDeviceEnrollment.ts
+new file mode 100644
+index 0000000..b3ac51c
+--- /dev/null
++++ b/apps/server/sources/app/auth/restrictedDeviceEnrollment.ts
+@@ -0,0 +1,350 @@
++import { createHash, randomBytes } from 'node:crypto';
++
++import {
++    MAX_DEVICE_CLAIM_LIFETIME_MS,
++    MAX_RESTRICTED_DEVICE_GENERATION,
++    areRestrictedDeviceClaimTimesUsable,
++    isBoundedRestrictedDeviceIdentifier,
++    isRestrictedAuthorityIncarnation,
++    isRestrictedDeviceKind,
++    parseRestrictedDeviceGrantClaims,
++    type RestrictedDeviceGrantClaims,
++    type RestrictedDeviceKind,
++} from './restrictedDeviceClaimsContract';
++
++export type { RestrictedDeviceGrantClaims, RestrictedDeviceKind } from './restrictedDeviceClaimsContract';
++
++/**
++ * Owner-local device enrollment and grant lifecycle primitives.
++ *
++ * These functions hold no ambient authority: the caller supplies the authority
++ * incarnation, and every storage effect goes through an injected callback.
++ * Production call sites must use the bound closure in
++ * `restrictedDeviceAuthority.ts`; these primitives take an explicit incarnation
++ * only for that closure and offline fixtures. The protected owner startup
++ * binding and restore-incarnation rotation are separate owner-side requirements
++ * and are not established here. The relay never reaches them, so loopback,
++ * public origin, or phone tokens are not admission factors.
++ */
++
++const ENROLLMENT_SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
++
++export const DEFAULT_DEVICE_ENROLLMENT_TTL_MS = 5 * 60_000;
++export const MIN_DEVICE_ENROLLMENT_TTL_MS = 60_000;
++export const MAX_DEVICE_ENROLLMENT_TTL_MS = 15 * 60_000;
++export const DEFAULT_DEVICE_GRANT_TOKEN_TTL_MS = 12 * 60 * 60_000;
++export const MIN_DEVICE_GRANT_TOKEN_TTL_MS = 60_000;
++export const MAX_DEVICE_GRANT_TOKEN_TTL_MS = MAX_DEVICE_CLAIM_LIFETIME_MS;
++
++export type RestrictedDeviceEnrollmentRecord = Readonly<{
++    accountId: string;
++    authorityIncarnation: string;
++    kind: RestrictedDeviceKind;
++    secretHash: string;
++    createdAt: Date;
++    expiresAt: Date;
++}>;
++
++export type RestrictedDeviceGrantRecord = Readonly<{
++    id: string;
++    accountId: string;
++    authorityIncarnation: string;
++    kind: string;
++    generation: number;
++    createdAt: Date;
++    revokedAt: Date | null;
++}>;
++
++export type RestrictedDeviceGrantStatus = 'active' | 'revoked' | 'restore-required' | 'not-found';
++
++export type RestrictedDeviceGrantLifecycleErrorCode =
++    | 'authority-not-configured'
++    | 'invalid-request'
++    | 'enrollment-not-usable'
++    | 'enrollment-limit'
++    | 'grant-not-found'
++    | 'grant-revoked'
++    | 'restore-required';
++
++export class RestrictedDeviceGrantLifecycleError extends Error {
++    readonly code: RestrictedDeviceGrantLifecycleErrorCode;
++
++    constructor(code: RestrictedDeviceGrantLifecycleErrorCode, message: string) {
++        super(message);
++        this.name = 'RestrictedDeviceGrantLifecycleError';
++        this.code = code;
++    }
++}
++
++function reject(code: RestrictedDeviceGrantLifecycleErrorCode, message: string): never {
++    throw new RestrictedDeviceGrantLifecycleError(code, message);
++}
++
++function readIdentifier(value: unknown, label: string): string {
++    if (!isBoundedRestrictedDeviceIdentifier(value)) {
++        return reject('invalid-request', `${label} must be a bounded non-empty identifier`);
++    }
++    return value;
++}
++
++export function requireRestrictedDeviceAuthorityIncarnation(value: unknown): string {
++    if (!isRestrictedAuthorityIncarnation(value)) {
++        return reject('authority-not-configured', 'Restricted device authority incarnation is missing or invalid');
++    }
++    return value;
++}
++
++function readNowMs(value: unknown): number {
++    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
++        return reject('invalid-request', 'A current timestamp is required');
++    }
++    return value;
++}
++
++function readKind(value: unknown): RestrictedDeviceKind {
++    if (!isRestrictedDeviceKind(value)) {
++        return reject('invalid-request', 'Restricted device kind must be phone or host');
++    }
++    return value;
++}
++
++function readTtlMs(value: unknown, fallback: number, minimum: number, maximum: number, label: string): number {
++    const ttlMs = value === undefined ? fallback : value;
++    if (typeof ttlMs !== 'number' || !Number.isSafeInteger(ttlMs) || ttlMs < minimum || ttlMs > maximum) {
++        return reject('invalid-request', `${label} must be between ${minimum} and ${maximum} milliseconds`);
++    }
++    return ttlMs;
++}
++
++function readGeneration(value: unknown): number {
++    if (typeof value !== 'number' || !Number.isSafeInteger(value)
++        || value < 1 || value > MAX_RESTRICTED_DEVICE_GENERATION) {
++        return reject('restore-required', 'Durable device grant generation is not usable');
++    }
++    return value;
++}
++
++function readGrantKind(value: unknown): RestrictedDeviceKind {
++    if (!isRestrictedDeviceKind(value)) {
++        return reject('restore-required', 'Durable device grant kind is not usable');
++    }
++    return value;
++}
++
++/** One-time secret material is only ever persisted as this domain-separated digest. */
++export function hashDeviceEnrollmentSecret(secret: string): string {
++    if (typeof secret !== 'string' || !ENROLLMENT_SECRET_PATTERN.test(secret)) {
++        return reject('invalid-request', 'Device enrollment secret must be 256 bits of base64url material');
++    }
++    return createHash('sha256').update('rac-device-enrollment-v1:').update(secret).digest('hex');
++}
++
++/**
++ * Build the durable record for a pending enrollment. The returned secret is the
++ * only copy; callers must hand it to the owner-local client exactly once.
++ */
++export function createPendingEnrollment(params: Readonly<{
++    accountId: string;
++    authorityIncarnation: string;
++    kind?: RestrictedDeviceKind;
++    nowMs: number;
++    ttlMs?: number;
++    generateSecret?: () => string;
++}>): Readonly<{ secret: string; record: RestrictedDeviceEnrollmentRecord }> {
++    const accountId = readIdentifier(params.accountId, 'Account id');
++    const authorityIncarnation = requireRestrictedDeviceAuthorityIncarnation(params.authorityIncarnation);
++    const kind = params.kind === undefined ? 'phone' : readKind(params.kind);
++    const nowMs = readNowMs(params.nowMs);
++    const ttlMs = readTtlMs(
++        params.ttlMs,
++        DEFAULT_DEVICE_ENROLLMENT_TTL_MS,
++        MIN_DEVICE_ENROLLMENT_TTL_MS,
++        MAX_DEVICE_ENROLLMENT_TTL_MS,
++        'Device enrollment lifetime',
++    );
++    const secret = params.generateSecret ? params.generateSecret() : randomBytes(32).toString('base64url');
++    const secretHash = hashDeviceEnrollmentSecret(secret);
++    const expiresAtMs = nowMs + ttlMs;
++    if (!Number.isSafeInteger(expiresAtMs)) {
++        return reject('invalid-request', 'Device enrollment expiry is out of range');
++    }
++    return {
++        secret,
++        record: {
++            accountId,
++            authorityIncarnation,
++            kind,
++            secretHash,
++            createdAt: new Date(nowMs),
++            expiresAt: new Date(expiresAtMs),
++        },
++    };
++}
++
++/**
++ * Redeem one pending enrollment into exactly one durable grant. The injected
++ * callback owns the atomic conditional claim at transaction admission; a
++ * repeated, expired, foreign, or previous-incarnation secret must all collapse
++ * to the same null result. The expected kind is ingress-authorized and is part
++ * of the durable claim so a phone path can never redeem a host enrollment.
++ */
++export async function redeemPendingEnrollment(params: Readonly<{
++    accountId: string;
++    authorityIncarnation: string;
++    secret: string;
++    expectedKind: RestrictedDeviceKind;
++    redeemAtomically: (input: Readonly<{
++        secretHash: string;
++        accountId: string;
++        authorityIncarnation: string;
++        expectedKind: RestrictedDeviceKind;
++    }>) => Promise<Readonly<{ grantId: string; generation: number; kind: string }> | null>;
++}>): Promise<Readonly<{ grantId: string; generation: number; kind: RestrictedDeviceKind }>> {
++    const accountId = readIdentifier(params.accountId, 'Account id');
++    const authorityIncarnation = requireRestrictedDeviceAuthorityIncarnation(params.authorityIncarnation);
++    const expectedKind = readKind(params.expectedKind);
++    const secretHash = hashDeviceEnrollmentSecret(params.secret);
++    const redeemed = await params.redeemAtomically({
++        secretHash,
++        accountId,
++        authorityIncarnation,
++        expectedKind,
++    });
++    if (!redeemed) {
++        return reject('enrollment-not-usable', 'Device enrollment is not usable');
++    }
++    const grantId = readIdentifier(redeemed.grantId, 'Device grant id');
++    const generation = readGeneration(redeemed.generation);
++    const kind = readKind(redeemed.kind);
++    if (kind !== expectedKind) {
++        return reject('enrollment-not-usable', 'Device enrollment kind does not match the authorized ingress');
++    }
++    return { grantId, generation, kind };
++}
++
++/**
++ * Signable claims always name the current durable grant and generation. A grant
++ * from another incarnation requires owner re-enrollment; it is never silently
++ * reactivated or downgraded to legacy token issuance.
++ */
++export function buildRestrictedDeviceGrantClaims(params: Readonly<{
++    authorityIncarnation: string;
++    accountId: string;
++    grant: RestrictedDeviceGrantRecord | null;
++    nowMs: number;
++    tokenTtlMs?: number;
++}>): RestrictedDeviceGrantClaims {
++    const authorityIncarnation = requireRestrictedDeviceAuthorityIncarnation(params.authorityIncarnation);
++    const accountId = readIdentifier(params.accountId, 'Account id');
++    const nowMs = readNowMs(params.nowMs);
++    const tokenTtlMs = readTtlMs(
++        params.tokenTtlMs,
++        DEFAULT_DEVICE_GRANT_TOKEN_TTL_MS,
++        MIN_DEVICE_GRANT_TOKEN_TTL_MS,
++        MAX_DEVICE_GRANT_TOKEN_TTL_MS,
++        'Device grant token lifetime',
++    );
++    const grant = params.grant;
++    if (!grant || grant.accountId !== accountId) {
++        return reject('grant-not-found', 'Device grant does not belong to this account');
++    }
++    if (grant.authorityIncarnation !== authorityIncarnation) {
++        return reject('restore-required', 'Device grant belongs to a previous authority incarnation');
++    }
++    if (grant.revokedAt !== null) {
++        return reject('grant-revoked', 'Device grant has been revoked');
++    }
++    const grantId = readIdentifier(grant.id, 'Device grant id');
++    const grantGeneration = readGeneration(grant.generation);
++    const kind = readGrantKind(grant.kind);
++    if (!(grant.createdAt instanceof Date) || !Number.isFinite(grant.createdAt.getTime()) || grant.createdAt.getTime() > nowMs) {
++        return reject('restore-required', 'Durable device grant creation time is not usable');
++    }
++    const expiresAtMs = nowMs + tokenTtlMs;
++    if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= nowMs) {
++        return reject('invalid-request', 'Device grant token expiry is out of range');
++    }
++
++    const claims: RestrictedDeviceGrantClaims = {
++        format: 'restricted-device-v1',
++        authorityIncarnation,
++        accountId,
++        grantId,
++        grantGeneration,
++        kind,
++        issuedAtMs: nowMs,
++        expiresAtMs,
++    };
++    // The issuer must produce exactly what the verifier accepts.
++    const parsed = parseRestrictedDeviceGrantClaims(claims);
++    if (!parsed || !areRestrictedDeviceClaimTimesUsable(parsed, nowMs)) {
++        return reject('invalid-request', 'Device grant claims do not satisfy the shared claim contract');
++    }
++    return parsed;
++}
++
++/**
++ * Status is read-only. A durable grant from a previous incarnation is reported
++ * as restore-required and is not modified, so a restored backup cannot revive
++ * authority that the current issuer never enrolled.
++ */
++export async function readRestrictedDeviceGrantStatus(params: Readonly<{
++    authorityIncarnation: string;
++    accountId: string;
++    grantId: string;
++    nowMs: number;
++    lookupGrant: (id: string) => Promise<RestrictedDeviceGrantRecord | null>;
++}>): Promise<RestrictedDeviceGrantStatus> {
++    const authorityIncarnation = requireRestrictedDeviceAuthorityIncarnation(params.authorityIncarnation);
++    const accountId = readIdentifier(params.accountId, 'Account id');
++    const grantId = readIdentifier(params.grantId, 'Device grant id');
++    const nowMs = readNowMs(params.nowMs);
++    const grant = await params.lookupGrant(grantId);
++    if (!grant || grant.accountId !== accountId) return 'not-found';
++    if (grant.authorityIncarnation !== authorityIncarnation) return 'restore-required';
++    if (grant.revokedAt !== null) return 'revoked';
++    if (grant.id !== grantId) return 'not-found';
++    if (!(grant.createdAt instanceof Date) || !Number.isFinite(grant.createdAt.getTime()) || grant.createdAt.getTime() > nowMs) {
++        return 'restore-required';
++    }
++    try {
++        readGeneration(grant.generation);
++        readGrantKind(grant.kind);
++    } catch {
++        return 'restore-required';
++    }
++    return 'active';
++}
++
++/**
++ * Revoke one grant through a conditional update. Generation moves with the
++ * revocation when it can, so an already-cached token for the same grant stops
++ * verifying; terminal-generation rows are revoked without an increment.
++ */
++export async function revokeRestrictedDeviceGrant(params: Readonly<{
++    accountId: string;
++    authorityIncarnation: string;
++    grantId: string;
++    nowMs: number;
++    revokeConditionally: (input: Readonly<{
++        accountId: string;
++        authorityIncarnation: string;
++        grantId: string;
++        now: Date;
++    }>) => Promise<number>;
++}>): Promise<boolean> {
++    const accountId = readIdentifier(params.accountId, 'Account id');
++    const authorityIncarnation = requireRestrictedDeviceAuthorityIncarnation(params.authorityIncarnation);
++    const grantId = readIdentifier(params.grantId, 'Device grant id');
++    const nowMs = readNowMs(params.nowMs);
++    const updated = await params.revokeConditionally({
++        accountId,
++        authorityIncarnation,
++        grantId,
++        now: new Date(nowMs),
++    });
++    if (!Number.isSafeInteger(updated) || updated < 0 || updated > 1) {
++        return reject('invalid-request', 'Conditional device grant revocation must affect at most one row');
++    }
++    return updated === 1;
++}
+diff --git a/apps/server/sources/app/auth/restrictedDeviceEnrollmentStore.ts b/apps/server/sources/app/auth/restrictedDeviceEnrollmentStore.ts
+new file mode 100644
+index 0000000..a678557
+--- /dev/null
++++ b/apps/server/sources/app/auth/restrictedDeviceEnrollmentStore.ts
+@@ -0,0 +1,258 @@
++import { db } from '@/storage/db';
++
++import {
++    MAX_RESTRICTED_DEVICE_GENERATION,
++    isRestrictedDeviceKind,
++} from './restrictedDeviceClaimsContract';
++import {
++    createRestrictedDeviceAuthority,
++    type RecoveryEnrollmentRow,
++    type RestrictedDeviceAuthority,
++    type RestrictedDeviceAuthorityStore,
++} from './restrictedDeviceAuthority';
++import {
++    RestrictedDeviceGrantLifecycleError,
++    type RestrictedDeviceGrantRecord,
++} from './restrictedDeviceEnrollment';
++
++type PrismaRecoveryRow = Readonly<{
++    id: string;
++    accountId: string;
++    authorityIncarnation: string;
++    kind: string;
++    createdAt: Date;
++    expiresAt: Date;
++    consumedAt: Date | null;
++    redeemedGrantId: string | null;
++    redeemedGrant: Readonly<{
++        id: string;
++        accountId: string;
++        authorityIncarnation: string;
++        kind: string;
++        generation: number;
++        createdAt: Date;
++        revokedAt: Date | null;
++    }> | null;
++}>;
++
++function toRecoveryRow(row: PrismaRecoveryRow): RecoveryEnrollmentRow {
++    return {
++        id: row.id,
++        accountId: row.accountId,
++        authorityIncarnation: row.authorityIncarnation,
++        kind: row.kind,
++        createdAt: row.createdAt,
++        expiresAt: row.expiresAt,
++        consumedAt: row.consumedAt,
++        redeemedGrantId: row.redeemedGrantId,
++        grant: row.redeemedGrant
++            ? {
++                id: row.redeemedGrant.id,
++                accountId: row.redeemedGrant.accountId,
++                authorityIncarnation: row.redeemedGrant.authorityIncarnation,
++                kind: row.redeemedGrant.kind,
++                generation: row.redeemedGrant.generation,
++                createdAt: row.redeemedGrant.createdAt,
++                revokedAt: row.redeemedGrant.revokedAt,
++            }
++            : null,
++    };
++}
++
++async function findGrant(id: string): Promise<RestrictedDeviceGrantRecord | null> {
++    return await db.restrictedDeviceGrant.findUnique({ where: { id } });
++}
++
++function isTransactionConflict(error: unknown): boolean {
++    return typeof error === 'object' && error !== null && 'code' in error
++        && (error as { code?: unknown }).code === 'P2034';
++}
++
++/** Keep the per-account pending cap strict under concurrent issuance. */
++async function withSerializableRetry<T>(operation: () => Promise<T>): Promise<T> {
++    for (let attempt = 0; ; attempt += 1) {
++        try {
++            return await operation();
++        } catch (error) {
++            if (isTransactionConflict(error) && attempt < 2) continue;
++            throw error;
++        }
++    }
++}
++
++function createPrismaStore(): RestrictedDeviceAuthorityStore {
++    return {
++        async createEnrollment({ record, maxPending, clock }) {
++            return await withSerializableRetry(async () => await db.$transaction(async (tx) => {
++                const admittedAt = clock();
++                await tx.restrictedDeviceEnrollment.deleteMany({
++                    where: {
++                        accountId: record.accountId,
++                        authorityIncarnation: record.authorityIncarnation,
++                        consumedAt: null,
++                        expiresAt: { lte: admittedAt },
++                    },
++                });
++                const pending = await tx.restrictedDeviceEnrollment.count({
++                    where: {
++                        accountId: record.accountId,
++                        authorityIncarnation: record.authorityIncarnation,
++                        consumedAt: null,
++                        expiresAt: { gt: admittedAt },
++                    },
++                });
++                if (pending >= maxPending) {
++                    throw new RestrictedDeviceGrantLifecycleError(
++                        'enrollment-limit',
++                        'Device enrollment limit reached for this account',
++                    );
++                }
++                return await tx.restrictedDeviceEnrollment.create({
++                    data: {
++                        accountId: record.accountId,
++                        authorityIncarnation: record.authorityIncarnation,
++                        kind: record.kind,
++                        secretHash: record.secretHash,
++                        createdAt: record.createdAt,
++                        expiresAt: record.expiresAt,
++                    },
++                    select: { id: true, expiresAt: true },
++                });
++            }, { isolationLevel: 'Serializable' }));
++        },
++
++        async redeemEnrollment({ secretHash, accountId, authorityIncarnation, expectedKind, clock }) {
++            return await db.$transaction(async (tx) => {
++                // Admission time is read inside the transaction; an earlier caller
++                // timestamp can never extend an enrollment that has since expired.
++                const admittedAt = clock();
++                const claimed = await tx.restrictedDeviceEnrollment.updateMany({
++                    where: {
++                        secretHash,
++                        accountId,
++                        authorityIncarnation,
++                        kind: expectedKind,
++                        consumedAt: null,
++                        expiresAt: { gt: admittedAt },
++                    },
++                    data: { consumedAt: admittedAt },
++                });
++                if (claimed.count !== 1) return null;
++
++                const enrollment = await tx.restrictedDeviceEnrollment.findUnique({ where: { secretHash } });
++                const kind = enrollment ? isRestrictedDeviceKind(enrollment.kind) : false;
++                if (
++                    !enrollment
++                    || enrollment.consumedAt === null
++                    || enrollment.accountId !== accountId
++                    || enrollment.authorityIncarnation !== authorityIncarnation
++                    || enrollment.kind !== expectedKind
++                    || !kind
++                ) {
++                    // Roll back the claim rather than leave a consumed enrollment
++                    // without its single grant.
++                    throw new Error('Device enrollment claim could not be completed');
++                }
++
++                const grant = await tx.restrictedDeviceGrant.create({
++                    data: {
++                        accountId: enrollment.accountId,
++                        authorityIncarnation: enrollment.authorityIncarnation,
++                        kind: expectedKind,
++                    },
++                });
++                await tx.restrictedDeviceEnrollment.update({
++                    where: { id: enrollment.id },
++                    data: { redeemedGrantId: grant.id },
++                });
++                return { grantId: grant.id, generation: grant.generation, kind: expectedKind };
++            });
++        },
++
++        findGrant,
++
++        async findEnrollment({ id, accountId, authorityIncarnation }) {
++            const row = await db.restrictedDeviceEnrollment.findUnique({
++                where: { id },
++                include: { redeemedGrant: true },
++            });
++            if (!row || row.accountId !== accountId || row.authorityIncarnation !== authorityIncarnation) return null;
++            return toRecoveryRow(row);
++        },
++
++        async listEnrollments({ accountId, authorityIncarnation, limit }) {
++            const rows = await db.restrictedDeviceEnrollment.findMany({
++                where: { accountId, authorityIncarnation },
++                orderBy: { createdAt: 'desc' },
++                take: limit,
++                include: { redeemedGrant: true },
++            });
++            return rows.map(toRecoveryRow);
++        },
++
++        async revokeGrantConditionally({ accountId, authorityIncarnation, grantId, now }) {
++            return await db.$transaction(async (tx) => {
++                const incremented = await tx.restrictedDeviceGrant.updateMany({
++                    where: {
++                        id: grantId,
++                        accountId,
++                        authorityIncarnation,
++                        revokedAt: null,
++                        generation: { lt: MAX_RESTRICTED_DEVICE_GENERATION },
++                    },
++                    data: { revokedAt: now, generation: { increment: 1 } },
++                });
++                if (incremented.count === 1) return 1;
++
++                // A terminal-generation row is revoked without incrementing past
++                // the integer bound; revokedAt alone still invalidates its tokens.
++                const terminal = await tx.restrictedDeviceGrant.updateMany({
++                    where: {
++                        id: grantId,
++                        accountId,
++                        authorityIncarnation,
++                        revokedAt: null,
++                        generation: { gte: MAX_RESTRICTED_DEVICE_GENERATION },
++                    },
++                    data: { revokedAt: now },
++                });
++                return terminal.count;
++            });
++        },
++
++        async deleteExpiredUnusedEnrollments({ authorityIncarnation, now, limit }) {
++            return await db.$transaction(async (tx) => {
++                const expired = await tx.restrictedDeviceEnrollment.findMany({
++                    where: {
++                        authorityIncarnation,
++                        consumedAt: null,
++                        expiresAt: { lte: now },
++                    },
++                    orderBy: { expiresAt: 'asc' },
++                    take: limit,
++                    select: { id: true },
++                });
++                if (expired.length === 0) return 0;
++                const deleted = await tx.restrictedDeviceEnrollment.deleteMany({
++                    where: {
++                        id: { in: expired.map(row => row.id) },
++                        authorityIncarnation,
++                        consumedAt: null,
++                        expiresAt: { lte: now },
++                    },
++                });
++                return deleted.count;
++            });
++        },
++    };
++}
++
++/** Composition used by protected server init; never by relay request handlers. */
++export function createPrismaRestrictedDeviceAuthority(options: Readonly<{
++    authorityIncarnation: string;
++}>): RestrictedDeviceAuthority {
++    return createRestrictedDeviceAuthority({
++        authorityIncarnation: options.authorityIncarnation,
++        store: createPrismaStore(),
++    });
++}
+diff --git a/apps/server/sources/app/auth/restrictedDeviceGrants.ts b/apps/server/sources/app/auth/restrictedDeviceGrants.ts
+index 815d12e..fd06740 100644
+--- a/apps/server/sources/app/auth/restrictedDeviceGrants.ts
++++ b/apps/server/sources/app/auth/restrictedDeviceGrants.ts
+@@ -1,17 +1,9 @@
+-import { z } from 'zod';
+-
+-const authorityIdSchema = z.uuid();
+-const deviceKindSchema = z.enum(['phone', 'host']);
+-const grantClaimsSchema = z.strictObject({
+-    format: z.literal('restricted-device-v1'),
+-    authorityIncarnation: authorityIdSchema,
+-    accountId: z.string().min(1).max(256),
+-    grantId: z.string().min(1).max(256),
+-    grantGeneration: z.number().int().min(1).max(2_147_483_647),
+-    kind: deviceKindSchema,
+-    issuedAtMs: z.number().int().nonnegative(),
+-    expiresAtMs: z.number().int().positive(),
+-});
++import {
++    areRestrictedDeviceClaimTimesUsable,
++    isRestrictedAuthorityIncarnation,
++    parseRestrictedDeviceGrantClaims,
++    type RestrictedDeviceKind,
++} from './restrictedDeviceClaimsContract';
+ 
+ type DeviceGrantSnapshot = Readonly<{
+     id: string;
+@@ -26,17 +18,22 @@ type DeviceGrantSnapshot = Readonly<{
+ export type RestrictedDeviceContext = Readonly<{
+     grantId: string;
+     generation: number;
+-    kind: z.infer<typeof deviceKindSchema>;
++    kind: RestrictedDeviceKind;
+ }>;
+ 
+-/** The installer supplies the current authority incarnation independently of restored session data. */
++/**
++ * Restricted-mode configuration read only. This environment value is a
++ * placeholder; it is not the protected owner startup binding or pre-listen
++ * restore-incarnation rotation, which remain separate owner-side requirements.
++ */
+ export function readRestrictedDeviceAuthority(env: NodeJS.ProcessEnv): string | null {
+     const mode = env.HAPPIER_RAC_RESTRICTED_DEPLOYMENT;
+     const incarnation = env.HAPPIER_RAC_AUTH_INCARNATION;
+     if (mode === undefined && incarnation === undefined) return null;
+-    const parsed = authorityIdSchema.safeParse(incarnation);
+-    if (mode !== '1' || !parsed.success) throw new Error('Restricted device authority is not configured');
+-    return parsed.data;
++    if (mode !== '1' || !isRestrictedAuthorityIncarnation(incarnation)) {
++        throw new Error('Restricted device authority is not configured');
++    }
++    return incarnation;
+ }
+ 
+ /** Accept signed claims only while the matching durable grant is current. */
+@@ -47,12 +44,10 @@ export async function verifyRestrictedDeviceGrant(params: Readonly<{
+     nowMs: number;
+     lookupGrant: (id: string) => Promise<DeviceGrantSnapshot | null>;
+ }>): Promise<RestrictedDeviceContext | null> {
+-    const parsed = grantClaimsSchema.safeParse(params.signedExtras);
+-    if (!parsed.success) return null;
+-    const claims = parsed.data;
++    const claims = parseRestrictedDeviceGrantClaims(params.signedExtras);
++    if (!claims) return null;
+     if (claims.accountId !== params.userId || claims.authorityIncarnation !== params.authorityIncarnation
+-        || claims.issuedAtMs > params.nowMs || claims.expiresAtMs <= params.nowMs
+-        || claims.expiresAtMs <= claims.issuedAtMs) return null;
++        || !areRestrictedDeviceClaimTimesUsable(claims, params.nowMs)) return null;
+ 
+     try {
+         const grant = await params.lookupGrant(claims.grantId);

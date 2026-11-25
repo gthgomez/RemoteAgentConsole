@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "base": {
+    "repository": "https://github.com/happier-dev/happier.git",
+    "commit": "e992e049ffa7a98ab60740ac60f94918f022ff24",
+    "tree": "911bdc3c673608490b932bd939166d88f198066a"
+  },
+  "patches": [
+    {
+      "path": "patches/happier/0001-restrict-rpc-and-acp-admission.patch",
+      "sha256": "012e3c492dc1c69faef449b715ce035a8386eb3d076832aa0e6a0697b6fb83c6",
+      "description": "Restricted RPC and ACP approval admission scaffold"
+    },
+    {
+      "path": "patches/happier/0002-require-current-device-grants.patch",
+      "sha256": "7623fcf7d2ec64ce5095c470892c224c070f6371c72447dd0864058e69abb825",
+      "description": "Restricted server grant validation, legacy login barrier, and additive storage"
+    },
+    {
+      "path": "patches/happier/0003-on-demand-relay-startup.patch",
+      "sha256": "c4ddef7289d8d4b7929b86a0293cbe4ff54beecb148b72e08582e8406d81857d",
+      "description": "Explicit on-demand startup for local user relay installation"
+    },
+    {
+      "path": "patches/happier/0004-restrict-relay-and-live-device-grants.patch",
+      "sha256": "4c46a7abcdcd1878a2b8a0354e76208bb31aa395a31fe536f4941a389f45b1c3",
+      "description": "Restricted relay Host and Origin checks and live socket grant validation"
+    },
+    {
+      "path": "patches/happier/0005-bind-restricted-policy-snapshot.patch",
+      "sha256": "813176aacb98036203e761e2dc44610fc6a6d43b5a9a3d21da9fcd473460935b",
+      "description": "Protected local policy identity validation and snapshot drift checks"
+    }
+  ]
+}
