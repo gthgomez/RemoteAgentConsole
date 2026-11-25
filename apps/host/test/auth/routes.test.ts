@@ -49,7 +49,7 @@ describe("device authentication routes", () => {
     const pair = async (code: string, displayName: string) => {
       const response = await fetch(`${address}/api/v1/devices/pair`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", connection: "close" },
         body: JSON.stringify({ code, displayName }),
       });
       return (await response.json()) as { credential: string };
@@ -61,13 +61,14 @@ describe("device authentication routes", () => {
       headers: {
         authorization: `Bearer ${firstDevice.credential}`,
         "content-type": "application/json",
+        connection: "close",
       },
       body: JSON.stringify({ requestId: "stream-session", projectId: "demo", runtimeId: "fake" }),
     });
     const sessionId = ((await created.json()) as { session: { id: string } }).session.id;
     const stream = (credential: string) =>
       fetch(`${address}/api/v1/sessions/${sessionId}/events`, {
-        headers: { authorization: `Bearer ${credential}` },
+        headers: { authorization: `Bearer ${credential}`, connection: "close" },
       });
 
     const first = await stream(firstDevice.credential);

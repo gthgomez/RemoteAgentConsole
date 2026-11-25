@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AcpRuntimeOptions } from "@remote-agent-console/acp-client";
@@ -23,8 +23,18 @@ const capabilities: RuntimeCapabilities = {
   files: false,
 };
 const temporaryDirectories: string[] = [];
+const expectedVersions =
+  process.platform === "win32"
+    ? { commandCode: process.version, openCode: process.version.replace(/^v/, "") }
+    : { commandCode: "1.2.3", openCode: "4.5.6" };
 
 async function makeExecutable(directory: string, name: string, version: string): Promise<string> {
+  // Windows needs a real named executable; a copied node.exe reports its own version.
+  if (process.platform === "win32") {
+    const path = join(directory, `${name}.exe`);
+    await copyFile(process.execPath, path);
+    return path;
+  }
   const path = join(directory, name);
   await writeFile(path, `#!/bin/sh\nprintf '%s\\n' '${version}'\n`);
   await chmod(path, 0o755);
@@ -118,8 +128,8 @@ describe("general runtime supervisor", () => {
       })),
     ).toEqual([
       { id: "fake", installed: true, version: "0.1.0" },
-      { id: "command-code", installed: true, version: "1.2.3" },
-      { id: "opencode", installed: true, version: "4.5.6" },
+      { id: "command-code", installed: true, version: expectedVersions.commandCode },
+      { id: "opencode", installed: true, version: expectedVersions.openCode },
     ]);
 
     const onEvent = vi.fn();
