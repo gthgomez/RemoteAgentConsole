@@ -207,9 +207,12 @@ Prerequisites:
   receipts fail the run before any module is imported.
 - The patch is refused if its SHA-256 differs from the qualified digest, so a
   non-maintained override cannot be exercised under this label.
-- `--tsc` and `--type-roots` are optional but are required to claim the compile. When
-  supplied, `tsc.js` is executed with the same pinned Node, its path/version/hash are
-  recorded, and only the exact patched module is compiled with the pinned flags.
+- `--tsc` and `--type-roots` are optional but are required to claim the compile.
+  Supply an owner-trusted compiler installation and Node type declarations.
+  The witness runs `tsc.js` with the same pinned Node and reports its version
+  output, the Node types version, and a hash prefix of the compiler entrypoint.
+  It compiles only the exact patched module with the pinned flags; it does not
+  attest the compiler installation.
   When omitted, the compile check prints `NOT_RUN` and the receipt lists
   `typescript-single-module` as `NOT_RUN`; no compiler proof is then claimed.
 - An existing `--temp-root` is used only as a parent; the suite creates an owned
