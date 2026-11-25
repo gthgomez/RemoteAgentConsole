@@ -1,0 +1,511 @@
+diff --git a/apps/cli/src/backends/codex/appServer/client/codexOwnedStdioTransport.ts b/apps/cli/src/backends/codex/appServer/client/codexOwnedStdioTransport.ts
+new file mode 100644
+index 0000000..55e8757
+--- /dev/null
++++ b/apps/cli/src/backends/codex/appServer/client/codexOwnedStdioTransport.ts
+@@ -0,0 +1,505 @@
++import {
++    createCodexAppServerRestrictedJsonLineReader,
++    type CodexAppServerRestrictedJsonLineFailureReason,
++} from './codexAppServerJsonLineReader';
++
++/**
++ * Inactive owner-backed stdio transport helper for a future reviewed binding.
++ *
++ * The owner supplies already-admitted streams and a bounded disposal/settlement
++ * contract. This module never resolves a command, reads PATH, spawns a process,
++ * opens a socket or uses ambient diagnostics. It performs transport framing only:
++ * JSON-RPC request/notification/approval/turn semantics are not implemented here.
++ * It requires the reviewed 0009 restricted byte reader. There is no current
++ * selector, barrel export or maintained client binding; it is not activation-ready.
++ *
++ * Settlement values are only owner claims. `null` means unknown/not confirmed.
++ * A settlement never means a provider turn was cancelled. A terminal state does
++ * not cancel an in-flight request or prove it was not delivered.
++ *
++ * The caller retains custody of an owner until a future client accepts it; the
++ * owner must remain idempotently disposable across failed handoff. Owner
++ * callbacks, stdin writes and stdout/stderr iterator acquisition/next/return must
++ * not synchronously block the JS event loop; those are async owner responsibilities.
++ * The write deadline runs from enqueue to settlement (10s by default).
++ */
++export type CodexOwnedStdioSettlement = Readonly<{
++    rootEmpty: boolean | null;
++    jobEmpty: boolean | null;
++}>;
++
++export type CodexOwnedStdioOwner = Readonly<{
++    /** UTF-8 bytes including the caller's LF; async and must not block the loop. */
++    stdin: Readonly<{ write: (bytes: Uint8Array) => Promise<void> }>;
++    /** Async byte iterator; acquisition/next/return must not block the loop. */
++    stdout: AsyncIterable<Uint8Array>;
++    /** Async byte iterator; acquisition/next/return must not block the loop. */
++    stderr: AsyncIterable<Uint8Array>;
++    /** Must invoke the handler immediately if the owner has already failed. */
++    onFailure: (handler: (error: unknown) => void) => () => void;
++    /** Must be idempotent and safe after a failed handoff. */
++    dispose: () => Promise<CodexOwnedStdioSettlement>;
++}>;
++
++export type CodexOwnedStdioLimits = Readonly<{
++    maxFrameBytes: number;
++    maxQueueItems: number;
++    maxQueueBytes: number;
++    writeDeadlineMs: number;
++    disposeDeadlineMs: number;
++    maxStderrDiscardBytes: number;
++}>;
++
++/**
++ * Provisional defaults for this inactive helper; a reviewed binding must re-derive
++ * them. Optional limits are snapshotted per transport at construction.
++ */
++export const CODEX_OWNED_STDIO_LIMITS: CodexOwnedStdioLimits = Object.freeze({
++    maxFrameBytes: 16 * 1024 * 1024,
++    maxQueueItems: 64,
++    maxQueueBytes: 1024 * 1024,
++    writeDeadlineMs: 10_000,
++    disposeDeadlineMs: 5_000,
++    maxStderrDiscardBytes: 8_000,
++});
++
++export type CodexOwnedStdioFailureReason =
++    | 'frame'
++    | 'eof'
++    | 'write'
++    | 'timeout'
++    | 'owner'
++    | 'callback'
++    | 'capacity'
++    | 'closed';
++
++/** One fixed fail-closed state. The message and reason are the only diagnostics. */
++export class CodexOwnedStdioError extends Error {
++    readonly reason: CodexOwnedStdioFailureReason;
++
++    constructor(reason: CodexOwnedStdioFailureReason) {
++        super(`Codex owned stdio failed closed (${reason})`);
++        this.name = 'CodexOwnedStdioError';
++        this.reason = reason;
++    }
++}
++
++export type CodexOwnedStdioTransport = Readonly<{
++    send: (payload: string) => Promise<void>;
++    start: (
++        onLine: (rawLine: string) => void,
++        onTerminal: (error: CodexOwnedStdioError) => void,
++    ) => void;
++    closeAdmission: () => void;
++    failClosed: (reason: CodexOwnedStdioFailureReason) => void;
++    dispose: () => Promise<CodexOwnedStdioSettlement>;
++    stderrBytesDiscarded: () => number;
++}>;
++
++/** UTF-8 byte length without allocating an encoded copy. */
++export function ownedStdioUtf8ByteLength(text: string): number {
++    let bytes = 0;
++    for (const character of text) {
++        const codePoint = character.codePointAt(0) ?? 0;
++        if (codePoint <= 0x7f) bytes += 1;
++        else if (codePoint <= 0x7ff) bytes += 2;
++        else if (codePoint >= 0xd800 && codePoint <= 0xdfff) bytes += 3;
++        else if (codePoint <= 0xffff) bytes += 3;
++        else bytes += 4;
++    }
++    return bytes;
++}
++
++const ownedStdioTextEncoder = new TextEncoder();
++const UNKNOWN_SETTLEMENT: CodexOwnedStdioSettlement = Object.freeze({
++    rootEmpty: null,
++    jobEmpty: null,
++});
++
++function readBooleanOrNull(value: unknown): boolean | null {
++    return value === true ? true : value === false ? false : null;
++}
++
++function normalizeSettlement(value: unknown): CodexOwnedStdioSettlement {
++    if (value === null || typeof value !== 'object') return UNKNOWN_SETTLEMENT;
++    const candidate = value as { rootEmpty?: unknown; jobEmpty?: unknown };
++    return Object.freeze({
++        rootEmpty: readBooleanOrNull(candidate.rootEmpty),
++        jobEmpty: readBooleanOrNull(candidate.jobEmpty),
++    });
++}
++
++/** Node/JS timers accept a signed 32-bit delay at most. */
++const MAX_TIMER_DELAY_MS = 2_147_483_647;
++
++function assertPositiveInteger(value: number, name: string): void {
++    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
++        throw new RangeError(`Codex owned stdio limit ${name} must be a positive safe integer`);
++    }
++}
++
++function assertDeadline(value: number, name: string): void {
++    assertPositiveInteger(value, name);
++    if (value > MAX_TIMER_DELAY_MS) {
++        throw new RangeError(`Codex owned stdio limit ${name} exceeds the JS timer maximum`);
++    }
++}
++
++function assertLimits(limits: CodexOwnedStdioLimits): void {
++    assertPositiveInteger(limits.maxFrameBytes, 'maxFrameBytes');
++    assertPositiveInteger(limits.maxQueueItems, 'maxQueueItems');
++    assertPositiveInteger(limits.maxQueueBytes, 'maxQueueBytes');
++    assertDeadline(limits.writeDeadlineMs, 'writeDeadlineMs');
++    assertDeadline(limits.disposeDeadlineMs, 'disposeDeadlineMs');
++    assertPositiveInteger(limits.maxStderrDiscardBytes, 'maxStderrDiscardBytes');
++}
++
++function assertOwner(owner: CodexOwnedStdioOwner): void {
++    if (owner === null || typeof owner !== 'object') {
++        throw new TypeError('Codex owned stdio owner is required');
++    }
++    if (!owner.stdin || typeof owner.stdin.write !== 'function') {
++        throw new TypeError('Codex owned stdio owner.stdin.write is required');
++    }
++    if (!owner.stdout || typeof owner.stdout[Symbol.asyncIterator] !== 'function') {
++        throw new TypeError('Codex owned stdio owner.stdout must be async iterable');
++    }
++    if (!owner.stderr || typeof owner.stderr[Symbol.asyncIterator] !== 'function') {
++        throw new TypeError('Codex owned stdio owner.stderr must be async iterable');
++    }
++    if (typeof owner.onFailure !== 'function') {
++        throw new TypeError('Codex owned stdio owner.onFailure is required');
++    }
++    if (typeof owner.dispose !== 'function') {
++        throw new TypeError('Codex owned stdio owner.dispose is required');
++    }
++}
++
++async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
++    let timer: ReturnType<typeof setTimeout> | null = null;
++    const timeout = new Promise<null>((resolve) => {
++        timer = setTimeout(() => resolve(null), timeoutMs);
++    });
++    try {
++        return await Promise.race([promise, timeout]);
++    } finally {
++        if (timer !== null) clearTimeout(timer);
++    }
++}
++
++function mapFrameFailure(reason: CodexAppServerRestrictedJsonLineFailureReason): CodexOwnedStdioFailureReason {
++    return reason === 'truncated_frame' ? 'eof' : 'frame';
++}
++
++/** Best-effort, non-blocking iterator return; closure is already fixed. */
++function detachIterator(iterator: AsyncIterator<Uint8Array>): void {
++    try {
++        const returned = iterator.return?.();
++        if (returned !== undefined && typeof returned.then === 'function') {
++            // An owner return that never settles must not hold the transport open.
++            void returned.then(
++                () => undefined,
++                () => undefined,
++            );
++        }
++    } catch {
++        // Owner iterator return is best-effort and never reopens closure.
++    }
++}
++
++export function createCodexOwnedStdioTransport(
++    owner: CodexOwnedStdioOwner,
++    limitsInput: CodexOwnedStdioLimits = CODEX_OWNED_STDIO_LIMITS,
++): CodexOwnedStdioTransport {
++    assertOwner(owner);
++    const limits: CodexOwnedStdioLimits = Object.freeze({ ...limitsInput });
++    assertLimits(limits);
++
++    let terminal: CodexOwnedStdioError | null = null;
++    let admissionClosed = false;
++    let started = false;
++    let settlementPromise: Promise<CodexOwnedStdioSettlement> | null = null;
++    let queueItems = 0;
++    let queueBytes = 0;
++    let writeChain: Promise<void> = Promise.resolve();
++    let stderrBytes = 0;
++    let unsubscribeOwner: (() => void) | null = null;
++    const terminalHandlers = new Set<(error: CodexOwnedStdioError) => void>();
++    const sendRejecters = new Set<(error: CodexOwnedStdioError) => void>();
++
++    const fail = (reason: CodexOwnedStdioFailureReason): void => {
++        if (terminal !== null || admissionClosed) return;
++        const error = new CodexOwnedStdioError(reason);
++        terminal = error;
++        admissionClosed = true;
++        for (const reject of [...sendRejecters]) reject(error);
++        sendRejecters.clear();
++        for (const handler of [...terminalHandlers]) {
++            try {
++                handler(error);
++            } catch {
++                // The fail-closed state is already fixed; a reporter must not reopen it.
++            }
++        }
++        terminalHandlers.clear();
++    };
++
++    const closeAdmission = (): void => {
++        admissionClosed = true;
++        const error = new CodexOwnedStdioError('closed');
++        for (const reject of [...sendRejecters]) reject(error);
++        sendRejecters.clear();
++    };
++
++    const send = async (payload: string): Promise<void> => {
++        if (terminal !== null) throw terminal;
++        if (admissionClosed) throw new CodexOwnedStdioError('closed');
++        if (typeof payload !== 'string' || !payload.endsWith('\n')) {
++            fail('write');
++            throw terminal ?? new CodexOwnedStdioError('write');
++        }
++        // Measure before encoding; UTF-8 bytes are never fewer than UTF-16 units.
++        if (payload.length > limits.maxQueueBytes) {
++            fail('capacity');
++            throw terminal ?? new CodexOwnedStdioError('capacity');
++        }
++        const payloadBytes = ownedStdioUtf8ByteLength(payload);
++        if (
++            payloadBytes > limits.maxQueueBytes
++            || queueItems + 1 > limits.maxQueueItems
++            || queueBytes + payloadBytes > limits.maxQueueBytes
++        ) {
++            fail('capacity');
++            throw terminal ?? new CodexOwnedStdioError('capacity');
++        }
++        const bytes = ownedStdioTextEncoder.encode(payload);
++        queueItems += 1;
++        queueBytes += payloadBytes;
++
++        await new Promise<void>((resolve, reject) => {
++            let settled = false;
++            let timer: ReturnType<typeof setTimeout> | null = null;
++            let rejectFromTerminal: ((error: CodexOwnedStdioError) => void) | null = null;
++            const finish = (): void => {
++                if (settled) return;
++                settled = true;
++                if (timer !== null) clearTimeout(timer);
++                if (rejectFromTerminal !== null) sendRejecters.delete(rejectFromTerminal);
++                queueItems -= 1;
++                queueBytes -= payloadBytes;
++            };
++            rejectFromTerminal = (error: CodexOwnedStdioError): void => {
++                finish();
++                reject(error);
++            };
++            sendRejecters.add(rejectFromTerminal);
++            timer = setTimeout(() => fail('timeout'), limits.writeDeadlineMs);
++            const run = writeChain.then(async () => {
++                // A queued write never touches the stream after terminal/close.
++                if (terminal !== null) throw terminal;
++                if (admissionClosed) throw new CodexOwnedStdioError('closed');
++                try {
++                    await owner.stdin.write(bytes);
++                } catch {
++                    fail('write');
++                    throw terminal ?? new CodexOwnedStdioError('write');
++                }
++            });
++            writeChain = run.catch(() => undefined);
++            run.then(
++                () => {
++                    finish();
++                    resolve();
++                },
++                (error: unknown) => {
++                    finish();
++                    if (error instanceof CodexOwnedStdioError) {
++                        reject(error);
++                        return;
++                    }
++                    fail('write');
++                    reject(terminal ?? new CodexOwnedStdioError('write'));
++                },
++            );
++        });
++    };
++
++    const start = (
++        onLine: (rawLine: string) => void,
++        onTerminal: (error: CodexOwnedStdioError) => void,
++    ): void => {
++        if (started) throw new Error('Codex owned stdio transport already started');
++        started = true;
++        if (terminal !== null || admissionClosed) {
++            if (terminal !== null) {
++                try {
++                    onTerminal(terminal);
++                } catch {
++                    // A synchronous early terminal observer must not reopen closure.
++                }
++            }
++            return;
++        }
++        terminalHandlers.add(onTerminal);
++        let ownerSubscription: (() => void) | null = null;
++        try {
++            ownerSubscription = owner.onFailure(() => fail('owner'));
++        } catch {
++            fail('owner');
++        }
++        if (terminal !== null || admissionClosed) {
++            // The owner replayed failure while registering; detach the just-returned
++            // subscription exactly once and never acquire stdout/stderr afterwards.
++            terminalHandlers.delete(onTerminal);
++            if (ownerSubscription !== null) {
++                try {
++                    ownerSubscription();
++                } catch {
++                    // Detachment is best-effort; owner disposal is already bounded.
++                }
++            }
++            return;
++        }
++        unsubscribeOwner = ownerSubscription;
++
++        const reader = createCodexAppServerRestrictedJsonLineReader(
++            (rawLine) => {
++                if (terminal !== null || admissionClosed) return;
++                try {
++                    onLine(rawLine);
++                } catch {
++                    // Any thrown callback value, including a transport error subtype,
++                    // maps to the one fixed sanitized callback state.
++                    fail('callback');
++                }
++            },
++            {
++                maxFrameBytes: limits.maxFrameBytes,
++                onFailure: (failure) => fail(mapFrameFailure(failure.reason)),
++            },
++        );
++
++        const stdoutLoop = (async () => {
++            let iterator: AsyncIterator<Uint8Array> | null = null;
++            let completed = false;
++            try {
++                iterator = owner.stdout[Symbol.asyncIterator]();
++            } catch {
++                if (terminal === null && !admissionClosed) fail('owner');
++                return;
++            }
++            try {
++                // Gate after acquisition, before any next(): acquisition itself may
++                // synchronously replay owner failure or observe closure.
++                if (terminal !== null || admissionClosed) return;
++                for (;;) {
++                    if (terminal !== null || admissionClosed) break;
++                    // Exactly one next() is in flight: the loop awaits it before the
++                    // next gate, and a closure observed by that next skips resubmission.
++                    const step = await iterator.next();
++                    if (terminal !== null || admissionClosed) break;
++                    if (step.done === true) {
++                        completed = true;
++                        break;
++                    }
++                    const chunk = step.value;
++                    if (!(chunk instanceof Uint8Array)) {
++                        fail('frame');
++                        break;
++                    }
++                    try {
++                        reader.push(chunk);
++                    } catch {
++                        fail('frame');
++                        break;
++                    }
++                    // Do not submit another next() after closure was observed.
++                }
++            } catch {
++                if (terminal === null && !admissionClosed) fail('owner');
++            } finally {
++                if (!completed && iterator !== null) detachIterator(iterator);
++            }
++            if (terminal !== null || admissionClosed) return;
++            const status = reader.finish();
++            fail(status === 'failed' ? 'frame' : 'eof');
++        })();
++        void stdoutLoop;
++        if (terminal !== null || admissionClosed) return;
++
++        void (async () => {
++            let iterator: AsyncIterator<Uint8Array> | null = null;
++            let completed = false;
++            try {
++                iterator = owner.stderr[Symbol.asyncIterator]();
++            } catch {
++                if (terminal === null && !admissionClosed) fail('owner');
++                return;
++            }
++            try {
++                // Gate after acquisition: stderr acquisition may synchronously replay
++                // failure, and a synchronous stdout terminal already returned above.
++                if (terminal !== null || admissionClosed) return;
++                for (;;) {
++                    if (terminal !== null || admissionClosed) break;
++                    const step = await iterator.next();
++                    if (terminal !== null || admissionClosed) break;
++                    if (step.done === true) {
++                        completed = true;
++                        break;
++                    }
++                    if (!(step.value instanceof Uint8Array)) {
++                        fail('owner');
++                        break;
++                    }
++                    // Count only; never retain, parse or report stderr content.
++                    stderrBytes = Math.min(
++                        limits.maxStderrDiscardBytes,
++                        stderrBytes + step.value.byteLength,
++                    );
++                }
++            } catch {
++                if (terminal === null && !admissionClosed) fail('owner');
++            } finally {
++                if (!completed && iterator !== null) detachIterator(iterator);
++            }
++        })();
++    };
++
++    const dispose = async (): Promise<CodexOwnedStdioSettlement> => {
++        if (settlementPromise !== null) return await settlementPromise;
++        closeAdmission();
++        settlementPromise = (async () => {
++            try {
++                const value = await withTimeout(
++                    Promise.resolve().then(() => owner.dispose()),
++                    limits.disposeDeadlineMs,
++                );
++                return normalizeSettlement(value);
++            } catch {
++                return UNKNOWN_SETTLEMENT;
++            }
++        })();
++        if (unsubscribeOwner !== null) {
++            const unsubscribe = unsubscribeOwner;
++            // The settlement promise is already published, so a reentrant dispose
++            // from a synchronous unsubscribe cannot start a second owner disposal.
++            unsubscribeOwner = null;
++            try {
++                unsubscribe();
++            } catch {
++                // Owner unsubscription is best-effort; disposal is already bounded.
++            }
++        }
++        return await settlementPromise;
++    };
++
++    return {
++        send,
++        start,
++        closeAdmission,
++        failClosed: fail,
++        dispose,
++        stderrBytesDiscarded: () => stderrBytes,
++    };
++}
