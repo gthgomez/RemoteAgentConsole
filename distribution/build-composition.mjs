@@ -48,12 +48,15 @@ function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function samePath(left, right) {
-  const normalize = (value) => {
-    const absolute = resolve(value);
-    return process.platform === "win32" ? absolute.toLowerCase() : absolute;
-  };
-  return normalize(left) === normalize(right);
+function samePath(left, right, label = "Repository") {
+  if (process.platform !== "win32") return resolve(left) === resolve(right);
+  // Windows Git expands 8.3 names and junction aliases, so compare the
+  // canonical existing targets rather than the caller's spelling.
+  try {
+    return realpathSync.native(resolve(left)) === realpathSync.native(resolve(right));
+  } catch (error) {
+    fail(`${label} path could not be resolved: ${error.message}`);
+  }
 }
 
 function assertFullCommit(value, label) {
@@ -576,7 +579,8 @@ function parseStatusZ(raw) {
 function verifyRacCandidate({ racRepo, expectedCommit, lock }) {
   const expected = assertFullCommit(expectedCommit, "RAC expected commit");
   const root = git(racRepo, ["rev-parse", "--show-toplevel"]);
-  if (!samePath(root, racRepo)) fail(`RAC repository root is not the selected source: ${root}`);
+  if (!samePath(root, racRepo, "RAC repository"))
+    fail(`RAC repository root is not the selected source: ${root}`);
   const head = git(racRepo, ["rev-parse", "HEAD"]);
   const commitObject = git(racRepo, ["cat-file", "-p", head]);
   const parents = commitObject
@@ -667,7 +671,8 @@ function verifyBabelCandidate({ babelRepo, expectedCommit, expectedTree, lock })
     );
   }
   const root = git(babelRepo, ["rev-parse", "--show-toplevel"]);
-  if (!samePath(root, babelRepo)) fail(`Babel repository root is not the selected source: ${root}`);
+  if (!samePath(root, babelRepo, "Babel repository"))
+    fail(`Babel repository root is not the selected source: ${root}`);
   const symbolic = gitProbe(babelRepo, ["symbolic-ref", "-q", "HEAD"]);
   if (symbolic.error) fail(`git symbolic-ref could not start: ${symbolic.error.message}`);
   if (symbolic.status === 0) {
@@ -762,7 +767,7 @@ async function verifyStagedHappierCandidate({
     fail("composition lock is missing the pinned Happier source identity");
   }
   const root = git(candidateRepo, ["rev-parse", "--show-toplevel"]);
-  if (!samePath(root, candidateRepo)) {
+  if (!samePath(root, candidateRepo, "Staged candidate repository")) {
     fail(`Staged candidate root is not the selected source: ${root}`);
   }
   const head = git(candidateRepo, ["rev-parse", "HEAD"]);

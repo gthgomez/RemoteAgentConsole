@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -568,6 +568,64 @@ test("rejects swapped repository identities", async (t) => {
   await assert.rejects(
     qualifyCandidate(qualifyOptions(world, { scope: "composition", babelRepo: world.rac })),
     /Babel HEAD mismatch/,
+  );
+});
+
+test("qualifies a candidate selected through the same Windows directory aliases", {
+  skip: process.platform !== "win32" ? "junction aliases are Windows-only" : false,
+}, async (t) => {
+  const world = await createWorld();
+  t.after(() => cleanup(world));
+  const aliases = {
+    rac: join(world.root, "rac-alias"),
+    babel: join(world.root, "babel-alias"),
+    candidate: join(world.root, "candidate-alias"),
+  };
+  await symlink(world.rac, aliases.rac, "junction");
+  await symlink(world.babel, aliases.babel, "junction");
+  await symlink(world.candidate, aliases.candidate, "junction");
+  t.after(async () => {
+    for (const alias of Object.values(aliases)) {
+      await rm(alias, { recursive: true, force: true });
+    }
+  });
+
+  const receipt = await qualifyCandidate(
+    qualifyOptions(world, {
+      scope: "composition",
+      racRepo: aliases.rac,
+      babelRepo: aliases.babel,
+      candidateRepo: aliases.candidate,
+    }),
+  );
+
+  assert.equal(receipt.components.rac.selected.commit, world.racCommit);
+  assert.equal(receipt.components.rac.selected.clean, true);
+  assert.equal(receipt.components.babel.selected.commit, world.babelCommit);
+  assert.equal(receipt.components.babel.selected.clean, true);
+  assert.equal(receipt.components.happier.selected.patchedTree, world.patchedTree);
+  assert.equal(receipt.inputs.lock.sha256, sha256(await readFile(world.lockPath)));
+  assert.equal(receipt.inputs.patchSeries.sha256, sha256(await readFile(world.seriesPath)));
+});
+
+test("rejects selecting a descendant path as any repository root", async (t) => {
+  const world = await createWorld();
+  t.after(() => cleanup(world));
+
+  await assert.rejects(
+    qualifyCandidate(qualifyOptions(world, { racRepo: join(world.rac, "distribution") })),
+    /RAC repository root is not the selected source/,
+  );
+  await assert.rejects(
+    qualifyCandidate(
+      qualifyOptions(world, { scope: "composition", babelRepo: join(world.babel, "babel-cli") }),
+    ),
+    /Babel repository root is not the selected source/,
+  );
+  await mkdir(join(world.candidate, "nested"));
+  await assert.rejects(
+    qualifyCandidate(qualifyOptions(world, { candidateRepo: join(world.candidate, "nested") })),
+    /Staged candidate root is not the selected source/,
   );
 });
 
