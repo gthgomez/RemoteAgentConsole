@@ -704,10 +704,9 @@ internal sealed class CancelableStdioPipes : IDisposable
         var error = _standardError
             ?? throw new InvalidOperationException("The cancelable stderr pipe is unavailable.");
 
-        var standardInput = input.TakeParentHandle();
-        var standardOutput = output.TakeParentHandle();
-        var standardError = error.TakeParentHandle();
-
+        SafeFileHandle? standardInput = null;
+        SafeFileHandle? standardOutput = null;
+        SafeFileHandle? standardError = null;
         OverlappedWriteChannel? inputChannel = null;
         OverlappedReadChannel? outputChannel = null;
         OverlappedReadChannel? errorChannel = null;
@@ -715,18 +714,25 @@ internal sealed class CancelableStdioPipes : IDisposable
         var constructedReadChannels = 0;
         try
         {
+            standardInput = input.TakeParentHandle();
+            standardOutput = output.TakeParentHandle();
+            standardError = error.TakeParentHandle();
             inputChannel = new OverlappedWriteChannel(standardInput);
+            standardInput = null;
             lease = new DeferredLeaseRelease(_leaseStartRetained, pendingPumps: 2);
             outputChannel = new OverlappedReadChannel(standardOutput, "rac-stdout-pump", lease);
+            standardOutput = null;
             constructedReadChannels = 1;
             errorChannel = new OverlappedReadChannel(standardError, "rac-stderr-pump", lease);
+            standardError = null;
             constructedReadChannels = 2;
 
-            // Handles and the owner lease transfer to the facade constructor. It disposes
-            // its own channels on an exceptional start; this method must not dispose a
-            // transferred handle or release the lease while a started pump can retain.
+            var streams = new CancelableChildStdio(inputChannel, outputChannel, errorChannel, lease);
+            // Only the fully constructed facade can take custody. Start may launch a
+            // pump, so only the facade may perform cleanup from this point forward.
             _leaseHeld = false;
-            return new CancelableChildStdio(inputChannel, outputChannel, errorChannel, lease);
+            streams.Start();
+            return streams;
         }
         catch (Exception failure)
         {
@@ -735,37 +741,29 @@ internal sealed class CancelableStdioPipes : IDisposable
                 // The facade never took ownership. Dispose every constructed channel and
                 // account read channels that were never constructed so the lease can be
                 // released only after all pump slots are known.
-                inputChannel?.Dispose();
-                outputChannel?.Dispose();
-                errorChannel?.Dispose();
-                if (lease is not null)
+                try
                 {
-                    for (var index = constructedReadChannels; index < 2; index++)
+                    ResourceCleanup.DisposeAll(inputChannel, outputChannel, errorChannel,
+                        standardInput, standardOutput, standardError);
+                }
+                catch (Exception cleanupFailure)
+                {
+                    failure.Data["rac.stdioCleanupFailure"] = cleanupFailure;
+                }
+                finally
+                {
+                    if (lease is not null)
                     {
-                        lease.PumpExited();
+                        for (var index = constructedReadChannels; index < 2; index++)
+                        {
+                            lease.PumpExited();
+                        }
+                        lease.FinalizeRequested();
                     }
-
-                    lease.FinalizeRequested();
-                }
-                else
-                {
-                    standardInput.Dispose();
-                    standardOutput.Dispose();
-                    standardError.Dispose();
                 }
             }
 
-            if (failure is LaunchFailureException launchFailure)
-            {
-                throw launchFailure;
-            }
-
-            throw new LaunchFailureException(
-                LaunchStage.CreateStdio,
-                0,
-                $"Cancelable stdio custody failed during startup: {failure.GetType().Name}: {failure.Message} The child was never resumed.",
-                cleanup: null,
-                unsupported: false);
+            throw;
         }
     }
 

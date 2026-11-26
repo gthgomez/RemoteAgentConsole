@@ -1304,10 +1304,11 @@ internal static class WindowsLaunchScenarios
             peer = PeerSession.Start(context.Fixture, Path.Combine(witness, "peer träd 树"));
             peer.AssertHealthy(checks, "before injected pump start failure");
 
+            var negativeWitness = Path.Combine(witness, "failed-child-start.txt");
             var contract = LaunchContract.Create(
                 context.StdioProbePath,
                 Path.GetDirectoryName(context.StdioProbePath)!,
-                new[] { "--mode", "silent", "--silent-ms", "4000", "--marker", "LATE" },
+                new[] { "--mode", "silent", "--silent-ms", "4000", "--marker", "LATE", "--started-witness", negativeWitness },
                 EnvironmentPolicy.Minimal(context.PolicyTempDirectory));
 
             LaunchFailureException? failure = null;
@@ -1358,7 +1359,7 @@ internal static class WindowsLaunchScenarios
             }
 
             peer.AssertHealthy(checks, "after injected pump start failure");
-            checks.True(!File.Exists(Path.Combine(witness, "shutdown.json")), "no child code ran during the startup fault");
+            checks.True(!File.Exists(negativeWitness), "the rolled-back child did not reach the Main entry witness");
 
             LaunchDiagnostics.FailSecondReadPumpStart = false;
             LaunchDiagnostics.ReadPumpPaused = null;
@@ -1371,12 +1372,15 @@ internal static class WindowsLaunchScenarios
                 "the gated pump completed without retaining a live OVERLAPPED");
             peer.AssertHealthy(checks, "after deferred pump cleanup");
 
-            recovered = LaunchCancelableStdioProbe(context, checks, "--mode", "no-read", "--stay-ms", "0");
+            var positiveWitness = Path.Combine(witness, "recovered-child-start.txt");
+            recovered = LaunchCancelableStdioProbe(context, checks, "--mode", "no-read", "--stay-ms", "0", "--started-witness", positiveWitness);
             var recoveredStreams = recovered.CancelableStreams;
             checks.True(recoveredStreams is not null, "the fresh owner exposes cancelable custody");
             if (recoveredStreams is not null)
             {
                 checks.Equal("READY", ReadCancelableLine(recoveredStreams, error: false, StartupBound, checks), "a fresh owner starts after cleanup");
+                checks.True(File.Exists(positiveWitness) && File.ReadAllText(positiveWitness) == "entered-main",
+                    "the same Main entry witness fires in the positive control");
                 checks.True(recovered.WaitForExit(SettlementBound), "the fresh owner child exits");
                 checks.True(recovered.TrySettle(TimeSpan.FromSeconds(10)), "the fresh owner job settles");
             }

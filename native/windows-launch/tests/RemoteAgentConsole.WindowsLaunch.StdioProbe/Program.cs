@@ -22,6 +22,7 @@ internal static class StdioProbe
     {
         string? sentinelOutput = null;
         string? sentinelPath = null;
+        string? startedWitness = null;
         var sentinelHandle = 0L;
         var mode = "echo";
         var silentMilliseconds = 2500;
@@ -43,6 +44,9 @@ internal static class StdioProbe
                 case "--mode" when index + 1 < args.Length:
                     mode = args[++index];
                     break;
+                case "--started-witness" when index + 1 < args.Length:
+                    startedWitness = Path.GetFullPath(args[++index]);
+                    break;
                 case "--silent-ms" when index + 1 < args.Length:
                     silentMilliseconds = int.Parse(args[++index], CultureInfo.InvariantCulture);
                     break;
@@ -61,6 +65,10 @@ internal static class StdioProbe
 
         try
         {
+            if (startedWitness is not null)
+            {
+                File.WriteAllText(startedWitness, "entered-main", Encoding.ASCII);
+            }
             if (!string.IsNullOrWhiteSpace(sentinelOutput))
             {
                 // A numeric handle check can collide with an unrelated child handle (for

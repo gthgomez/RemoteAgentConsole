@@ -69,6 +69,7 @@ public static class WindowsProcessOwner
         CancelableStdioPipes? cancelablePipes = null;
         ChildStandardStreams? streams = null;
         CancelableChildStdio? cancelableStreams = null;
+        Exception? launchFailure = null;
         var standardHandles = stdio is ChildStdioMode.Pipes or ChildStdioMode.CancelablePipes;
         var inheritanceWindow = standardHandles ? StdioPipes.InheritanceWindow : null;
         if (inheritanceWindow is not null)
@@ -178,13 +179,15 @@ public static class WindowsProcessOwner
                     }
                     catch (Exception error)
                     {
-                        throw Rollback(
+                        var rollback = Rollback(
                             LaunchStage.CreateStdio,
                             0,
                             $"Cancelable stdio custody failed before the child was resumed: {error.GetType().Name}: {error.Message}",
                             process,
                             thread,
                             job);
+                        rollback.Data["rac.stdioStartFailure"] = error;
+                        throw rollback;
                     }
                 }
 
@@ -290,6 +293,11 @@ public static class WindowsProcessOwner
                 }
             }
         }
+        catch (Exception failure)
+        {
+            launchFailure = failure;
+            throw;
+        }
         finally
         {
             try
@@ -303,6 +311,10 @@ public static class WindowsProcessOwner
                     thread,
                     process,
                     job);
+            }
+            catch (Exception cleanupFailure) when (launchFailure is not null)
+            {
+                launchFailure.Data["rac.launchCleanupFailure"] = cleanupFailure;
             }
             finally
             {

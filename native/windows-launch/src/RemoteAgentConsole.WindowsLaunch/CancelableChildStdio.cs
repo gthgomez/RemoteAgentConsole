@@ -248,7 +248,10 @@ public sealed class CancelableChildStdio : IDisposable
         _output = output;
         _error = error;
         _leaseRelease = leaseRelease;
+    }
 
+    internal void Start()
+    {
         try
         {
             _output.Start();
@@ -268,9 +271,16 @@ public sealed class CancelableChildStdio : IDisposable
 
             _error.Start();
         }
-        catch
+        catch (Exception failure)
         {
-            Dispose();
+            try
+            {
+                Dispose();
+            }
+            catch (Exception cleanupFailure)
+            {
+                failure.Data["rac.stdioCleanupFailure"] = cleanupFailure;
+            }
             throw;
         }
     }
