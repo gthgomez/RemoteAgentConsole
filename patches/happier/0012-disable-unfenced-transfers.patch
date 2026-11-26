@@ -1,0 +1,58 @@
+diff --git a/apps/cli/src/api/machine/rpcHandlers.promptAssetTransfers.ts b/apps/cli/src/api/machine/rpcHandlers.promptAssetTransfers.ts
+index 9bce7589b1c443707372dc7b7f0760b271b8ad6e..c3a2f7d8851cac0f19c234cee788f67e4095fdf6 100644
+--- a/apps/cli/src/api/machine/rpcHandlers.promptAssetTransfers.ts
++++ b/apps/cli/src/api/machine/rpcHandlers.promptAssetTransfers.ts
+@@ -8,6 +8,7 @@ import {
+ 
+ import { configuration } from '@/configuration';
+ import type { PromptAssetAdapter } from '@/promptAssets/types';
++import { isRestrictedDeploymentConfigured } from '@/security/restrictedDeployment/policy';
+ import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+ import { registerUploadTransferLifecycleHandlers } from '@/transfers/rpc/registerUploadTransferLifecycleHandlers';
+ import { resolvePromptAssetDownloadSource } from '@/transfers/targets/resolvePromptAssetDownloadSource';
+@@ -35,6 +36,17 @@ export function registerMachinePromptAssetTransferRpcHandlers(params: Readonly<{
+   adapterRegistry: ReadonlyMap<string, PromptAssetAdapter>;
+ }>): MachinePromptAssetTransferRpcRegistration {
+   const store = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
++  const registration: MachinePromptAssetTransferRpcRegistration = {
++    transferSessionStore: store,
++    downloadStore: store,
++    dispose: async () => {
++      await store.dispose();
++    },
++  };
++
++  // Do not allocate an upload or register a finalize handler until the
++  // receiver can bind its effects to current device and project authority.
++  if (isRestrictedDeploymentConfigured()) return registration;
+ 
+   registerMachineDownloadTransferRpcHandlers({
+     rpcHandlerManager: params.rpcHandlerManager,
+@@ -125,11 +137,5 @@ export function registerMachinePromptAssetTransferRpcHandlers(params: Readonly<{
+     enableChunkEncryption: true,
+   });
+ 
+-  return {
+-    transferSessionStore: store,
+-    downloadStore: store,
+-    dispose: async () => {
+-      await store.dispose();
+-    },
+-  };
++  return registration;
+ }
+diff --git a/apps/server/sources/app/api/socket.ts b/apps/server/sources/app/api/socket.ts
+index f9b849ec4aceb5a8bcc49e5f2b08c8de440434eb..57707111b2ea519e353bb3eab8949d9f66ecd5ca 100644
+--- a/apps/server/sources/app/api/socket.ts
++++ b/apps/server/sources/app/api/socket.ts
+@@ -93,7 +93,9 @@ export function emitSocketPlannedRestart(
+ export function startSocket(app: Fastify, restrictedIngress?: RestrictedRelayIngress) {
+     const socketAdapter = getSocketAdapterFromEnv(process.env, "memory");
+     const shouldEnableRedisAdapter = isRedisStreamsEnabled(process.env, socketAdapter);
+-    const serverRoutedTransferEnabled = isServerFeatureEnabledForRequest(
++    // Codex-first restricted deployments have no grant-at-finalization transfer
++    // contract. An ordinary feature override cannot enable forwarding here.
++    const serverRoutedTransferEnabled = !restrictedIngress && isServerFeatureEnabledForRequest(
+         'machines.transfer.serverRouted',
+         process.env,
+     );

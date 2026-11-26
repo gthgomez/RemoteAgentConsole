@@ -87,6 +87,11 @@ data or accepting arbitrary user config/launcher inputs as remote authority.
 Production still needs owner-only IPC and startup/restore with the existing
 `0006` grant lifecycle, an effect-time fence for typed approvals and uploads,
 and an exact reviewed Codex-only installer from the pinned relay, web and CLI.
+The separate inactive `0012` draft disables the known server-routed machine
+transfer lane and prompt-asset transfer registration in restricted mode.
+`transfer-admission.test.mjs` tests those two call sites against exact staged
+source (`RAC_TRANSFER_WITNESS_HAPPIER_ROOT`); it does not cover all upload
+surfaces or prove effect-time fencing for any enabled transfer.
 Live prompts, approvals, continuation and cancellation are separate tests;
 none is inferred from an idle thread. The installed S25 Ultra Chrome PWA
 cellular journey is the final acceptance gate. All profiles remain disabled.
