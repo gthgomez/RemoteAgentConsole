@@ -1,0 +1,338 @@
+diff --git a/apps/cli/src/backends/codex/appServer/client/codexOwnedStdioTransport.ts b/apps/cli/src/backends/codex/appServer/client/codexOwnedStdioTransport.ts
+index 55e87573934851388750fa6b68fe4177f77dc507..6ac06597b76db3cca7b7bd530d24c22bfda7cd55 100644
+--- a/apps/cli/src/backends/codex/appServer/client/codexOwnedStdioTransport.ts
++++ b/apps/cli/src/backends/codex/appServer/client/codexOwnedStdioTransport.ts
+@@ -85,7 +85,7 @@ export class CodexOwnedStdioError extends Error {
+ }
+ 
+ export type CodexOwnedStdioTransport = Readonly<{
+-    send: (payload: string) => Promise<void>;
++    send: (payload: string, stillPending?: () => boolean) => Promise<void>;
+     start: (
+         onLine: (rawLine: string) => void,
+         onTerminal: (error: CodexOwnedStdioError) => void,
+@@ -147,6 +147,7 @@ function assertDeadline(value: number, name: string): void {
+ 
+ function assertLimits(limits: CodexOwnedStdioLimits): void {
+     assertPositiveInteger(limits.maxFrameBytes, 'maxFrameBytes');
++    if (limits.maxFrameBytes > 64 * 1024 * 1024) throw new RangeError('Codex owned stdio frame limit exceeds the reader ceiling');
+     assertPositiveInteger(limits.maxQueueItems, 'maxQueueItems');
+     assertPositiveInteger(limits.maxQueueBytes, 'maxQueueBytes');
+     assertDeadline(limits.writeDeadlineMs, 'writeDeadlineMs');
+@@ -251,7 +252,7 @@ export function createCodexOwnedStdioTransport(
+         sendRejecters.clear();
+     };
+ 
+-    const send = async (payload: string): Promise<void> => {
++    const send = async (payload: string, stillPending?: () => boolean): Promise<void> => {
+         if (terminal !== null) throw terminal;
+         if (admissionClosed) throw new CodexOwnedStdioError('closed');
+         if (typeof payload !== 'string' || !payload.endsWith('\n')) {
+@@ -298,6 +299,9 @@ export function createCodexOwnedStdioTransport(
+                 // A queued write never touches the stream after terminal/close.
+                 if (terminal !== null) throw terminal;
+                 if (admissionClosed) throw new CodexOwnedStdioError('closed');
++                // A provider request may have aborted or expired while queued.
++                // This synchronous check is the last step before owner admission.
++                if (stillPending && !stillPending()) return;
+                 try {
+                     await owner.stdin.write(bytes);
+                 } catch {
+diff --git a/apps/cli/src/backends/codex/appServer/client/createCodexAppServerClient.ts b/apps/cli/src/backends/codex/appServer/client/createCodexAppServerClient.ts
+index e74b4e4920f0f8f16f5de98205dce57084ecd4dc..50db3f13293ec4544a83e14f8b3655ef1516b46e 100644
+--- a/apps/cli/src/backends/codex/appServer/client/createCodexAppServerClient.ts
++++ b/apps/cli/src/backends/codex/appServer/client/createCodexAppServerClient.ts
+@@ -26,6 +26,12 @@ import {
+ } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+ import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
+ import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
++import { assertUnownedCodexLaunchAllowed } from '../../utils/restrictedCodexLaunch';
++import {
++    createCodexOwnedStdioTransport,
++    type CodexOwnedStdioOwner,
++    type CodexOwnedStdioTransport,
++} from './codexOwnedStdioTransport';
+ 
+ type JsonRpcMessage = Readonly<{
+     id?: number | string | null;
+@@ -178,11 +184,11 @@ async function rotateRpcLogIfNeeded(path: string, payload: string, maxBytes: num
+     });
+ }
+ 
+-function createRpcLogger(env: NodeJS.ProcessEnv): {
++function createRpcLogger(env: NodeJS.ProcessEnv, enabled = true): {
+     append: (entry: RpcLogEntry) => void;
+     flush: () => Promise<void>;
+ } {
+-    const path = resolveRpcLogPath(env);
++    const path = enabled ? resolveRpcLogPath(env) : null;
+     if (!path) {
+         return { append: () => undefined, flush: async () => undefined };
+     }
+@@ -377,12 +383,22 @@ type CreateCodexAppServerClientParams = Readonly<{
+     onCleanup?: (cleanup: () => Promise<void>) => void;
+     transport?:
+         | Readonly<{ kind: 'stdio' }>
++        | Readonly<{ kind: 'ownedStdio'; open: (signal?: AbortSignal) => Promise<CodexOwnedStdioOwner> }>
+         | Readonly<{ kind: 'daemonProxy' }>
+         | Readonly<{ kind: 'unixWebSocket'; socketPath: string }>;
+ }>;
+ 
+ export async function createCodexAppServerClient(params: CreateCodexAppServerClientParams): Promise<DisposableCodexAppServerClient> {
+     params.initializeRequestOptions?.signal?.throwIfAborted();
++    if (params.transport?.kind === 'ownedStdio') {
++        // The diagnostic owner has a fixed native command. Never silently drop
++        // upstream launch configuration that it cannot enforce.
++        if (params.configOverrides?.length || params.disableUserMcpServers) {
++            throw new Error('restricted_codex_owned_launch_options_unsupported');
++        }
++    } else {
++        assertUnownedCodexLaunchAllowed(params.processEnv);
++    }
+     if (params.transport && params.transport.kind !== 'stdio') return await createUnlockedCodexAppServerClient(params);
+     const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
+     const baseInvocation = await resolveCodexCliInvocation({
+@@ -412,9 +428,10 @@ async function createUnlockedCodexAppServerClient(
+ ): Promise<DisposableCodexAppServerClient> {
+     params.initializeRequestOptions?.signal?.throwIfAborted();
+     const sourceProcessEnv = params.processEnv ?? process.env;
+-    const rpcLogger = createRpcLogger(sourceProcessEnv);
+-    const processEnv = sanitizeCodexAppServerEnv(sourceProcessEnv);
+     const transport = params.transport ?? { kind: 'stdio' };
++    const rpcLogger = createRpcLogger(sourceProcessEnv, transport.kind !== 'ownedStdio');
++    const processEnv = sanitizeCodexAppServerEnv(sourceProcessEnv);
++    let ownedStdio: CodexOwnedStdioTransport | null = null;
+     const maxJsonLineChars = readMaxJsonLineChars(sourceProcessEnv);
+     const baseOverrides = params.disableUserMcpServers === true
+         ? readCodexMcpServerKeysFromConfigToml(processEnv).map((key) => `mcp_servers.${key}.enabled=false`)
+@@ -424,7 +441,7 @@ async function createUnlockedCodexAppServerClient(
+     let connectionReady = Promise.resolve();
+     if (transport.kind === 'unixWebSocket') {
+         webSocket = createCodexWebSocket(() => createConnection(transport.socketPath));
+-    } else {
++    } else if (transport.kind !== 'ownedStdio') {
+         const baseInvocation = resolvedInvocation ?? await resolveCodexCliInvocation({
+             args: transport.kind === 'daemonProxy'
+                 ? ['app-server', 'proxy']
+@@ -510,7 +527,7 @@ async function createUnlockedCodexAppServerClient(
+         }
+     };
+ 
+-    const sendMessage = async (message: Record<string, unknown>): Promise<void> => {
++    const sendMessage = async (message: Record<string, unknown>, ownedRequestKey?: string): Promise<void> => {
+         if (state.fatalError) {
+             throw state.fatalError;
+         }
+@@ -530,6 +547,12 @@ async function createUnlockedCodexAppServerClient(
+             const method = typeof message.method === 'string' ? message.method : 'notification';
+             throw new Error(`Failed to serialize Codex app-server ${method} message: ${reason}`);
+         }
++        if (ownedStdio) {
++            await ownedStdio.send(payload, ownedRequestKey === undefined
++                ? undefined
++                : () => pendingRequests.has(ownedRequestKey));
++            return;
++        }
+         const nextWrite = writeChain.then(async () => {
+             await connectionReady;
+             if (webSocket) {
+@@ -589,7 +612,11 @@ async function createUnlockedCodexAppServerClient(
+         if (reportedExitFailure || disposing) return;
+         reportedExitFailure = failure;
+         for (const handler of [...exitHandlers]) {
+-            void Promise.resolve(handler(failure)).catch(() => undefined);
++            try {
++                void Promise.resolve(handler(failure)).catch(() => undefined);
++            } catch {
++                // A failed observer must not stop other observers or owner teardown.
++            }
+         }
+     };
+ 
+@@ -597,6 +624,16 @@ async function createUnlockedCodexAppServerClient(
+     const terminateTransport = (): Promise<void> => {
+         if (terminateTransportPromise) return terminateTransportPromise;
+         terminateTransportPromise = (async () => {
++            if (ownedStdio) {
++                ownedStdio.closeAdmission();
++                try {
++                    await ownedStdio.dispose();
++                } finally {
++                    // This promise tracks client-side teardown, not root/job or a turn.
++                    resolveClosed?.();
++                }
++                return;
++            }
+             // Snapshot and terminate descendants before closing stdio. Ending stdin first can let a
+             // JavaScript launcher exit and re-parent its native Codex child before the tree walk.
+             if (child) await killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+@@ -620,6 +657,7 @@ async function createUnlockedCodexAppServerClient(
+             failure.message += `\n${sanitizeCodexAppServerRpcDiagnosticString(stderrBuffer.trim())}`;
+         }
+         failWaiters(state, failure);
++        ownedStdio?.closeAdmission();
+         const fatalFailure = state.fatalError ?? failure;
+         failPendingRequests(fatalFailure);
+         reportExit(fatalFailure);
+@@ -700,17 +738,20 @@ async function createUnlockedCodexAppServerClient(
+         failWith(error);
+     };
+ 
++    const handleJsonLine = (rawLine: string): void => {
++        if (state.fatalError) return;
++        try {
++            handleIncomingMessage(JSON.parse(rawLine) as JsonRpcMessage);
++        } catch (error) {
++            const failure = new Error(ownedStdio
++                ? 'Invalid Codex app-server JSON output'
++                : `Invalid Codex app-server JSON output: ${error instanceof Error ? error.message : String(error)}`);
++            if (rejectCorrelatedJsonLine(rawLine, failure)) return;
++            failWith(failure);
++        }
++    };
+     const jsonLineReader = createCodexAppServerJsonLineReader(
+-        (rawLine) => {
+-            if (state.fatalError) return;
+-            try {
+-                handleIncomingMessage(JSON.parse(rawLine) as JsonRpcMessage);
+-            } catch (error) {
+-                const failure = new Error(`Invalid Codex app-server JSON output: ${error instanceof Error ? error.message : String(error)}`);
+-                if (rejectCorrelatedJsonLine(rawLine, failure)) return;
+-                failWith(failure);
+-            }
+-        },
++        handleJsonLine,
+         {
+             maxBufferedChars: maxJsonLineChars,
+             onOversizedLine: handleOversizedJsonLine,
+@@ -835,7 +876,7 @@ async function createUnlockedCodexAppServerClient(
+                 method,
+                 // Codex app-server rejects requests that omit the `params` field entirely.
+                 params: requestParams === undefined ? {} : requestParams,
+-            }).catch((error: unknown) => {
++            }, requestKey).catch((error: unknown) => {
+                 const failure = error instanceof Error ? error : new Error(String(error));
+                 const pending = pendingRequests.get(requestKey);
+                 pendingRequests.delete(requestKey);
+@@ -884,6 +925,7 @@ async function createUnlockedCodexAppServerClient(
+             return await disposePromise;
+         }
+         disposing = true;
++        ownedStdio?.closeAdmission();
+         const disposedError = options?.pendingRequestError ?? createDisposedError();
+         failWaiters(state, disposedError);
+         failPendingRequests(disposedError);
+@@ -894,8 +936,6 @@ async function createUnlockedCodexAppServerClient(
+         })();
+         return await disposePromise;
+     };
+-    params.onCleanup?.(() => dispose());
+-
+     const onExit = (handler: CodexAppServerExitHandler): (() => void) => {
+         if (reportedExitFailure) {
+             void Promise.resolve(handler(reportedExitFailure)).catch(() => undefined);
+@@ -907,7 +947,17 @@ async function createUnlockedCodexAppServerClient(
+         };
+     };
+ 
++    let openedOwner: CodexOwnedStdioOwner | null = null;
+     try {
++        if (transport.kind === 'ownedStdio') {
++            const signal = params.initializeRequestOptions?.signal;
++            openedOwner = await transport.open(signal);
++            ownedStdio = createCodexOwnedStdioTransport(openedOwner);
++            openedOwner = null;
++            signal?.throwIfAborted();
++            ownedStdio.start(handleJsonLine, failWith);
++        }
++        params.onCleanup?.(() => dispose());
+         await request('initialize', {
+             clientInfo: {
+                 name: 'happier_cli',
+@@ -922,7 +972,8 @@ async function createUnlockedCodexAppServerClient(
+ 
+         return { request, notify, registerRequestHandler, registerNotificationHandler, onExit, dispose };
+     } catch (error) {
+-        await dispose().catch(() => undefined);
++        if (openedOwner) await openedOwner.dispose().catch(() => undefined);
++        if (transport.kind !== 'ownedStdio' || ownedStdio) await dispose().catch(() => undefined);
+         throw error;
+     }
+ }
+diff --git a/apps/cli/src/backends/codex/executionRuns/executionRunBackendFactory.ts b/apps/cli/src/backends/codex/executionRuns/executionRunBackendFactory.ts
+index df5f1f305bb84a8fa912b69b045af190aeb759b0..d64eb8091d899588fd2b7becc51b1a18e972c596 100644
+--- a/apps/cli/src/backends/codex/executionRuns/executionRunBackendFactory.ts
++++ b/apps/cli/src/backends/codex/executionRuns/executionRunBackendFactory.ts
+@@ -13,6 +13,7 @@ import { createCodexAppServerExecutionRunBackend } from './createCodexAppServerE
+ import { createCodexMcpExecutionRunBackend } from './createCodexMcpExecutionRunBackend';
+ import { probeCodexAppServerExecutionRunAvailability } from './probeCodexAppServerExecutionRunAvailability';
+ import { selectCodexExecutionRunTransport } from './selectCodexExecutionRunTransport';
++import { assertUnownedCodexLaunchAllowed } from '../utils/restrictedCodexLaunch';
+ 
+ const CODEX_EXECUTION_RUN_PROCESS_ENV_KEYS = [
+   'HAPPIER_CODEX_APP_SERVER_BIN',
+@@ -43,6 +44,8 @@ function buildCodexExecutionRunBaseEnv(isolationEnv: NodeJS.ProcessEnv | undefin
+ }
+ 
+ export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
++  // Reject before transport selection can fall back to a separate ACP/MCP process.
++  assertUnownedCodexLaunchAllowed(opts.isolation?.env);
+   // Reasoning effort uses the SAME canonical config-option vocabulary as session spawn
+   // (`reasoning_effort`), read with the shared protocol reader — no second vocabulary.
+   const reasoningEffortValue = readSpawnConfigOptionOverrideValue(
+diff --git a/apps/cli/src/backends/codex/executionRuns/probeCodexAppServerExecutionRunAvailability.ts b/apps/cli/src/backends/codex/executionRuns/probeCodexAppServerExecutionRunAvailability.ts
+index 2de1dd57a7d552a9582617689863d5aac9745231..cdd4c8f21a707e2bb4c8af94287173f0d852ffb6 100644
+--- a/apps/cli/src/backends/codex/executionRuns/probeCodexAppServerExecutionRunAvailability.ts
++++ b/apps/cli/src/backends/codex/executionRuns/probeCodexAppServerExecutionRunAvailability.ts
+@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
+ import { commandExistsInPath } from '@/daemon/service/commandExistsInPath';
+ import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
+ import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
++import { requiresOwnedCodexLaunch } from '../utils/restrictedCodexLaunch';
+ import {
+   CODEX_APP_SERVER_OVERRIDE_ENV_KEYS,
+   resolveCodexOverrideCommand,
+@@ -42,6 +43,7 @@ export function probeCodexAppServerExecutionRunAvailability(opts: Readonly<{
+   env?: NodeJS.ProcessEnv;
+   cwd?: string;
+ }> = {}): boolean {
++  if (requiresOwnedCodexLaunch(opts.env)) return false;
+   const env = opts.env ?? process.env;
+   const cwd = opts.cwd ?? process.cwd();
+   const rawOverrideCommand = resolveCodexOverrideCommand(env, CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, cwd);
+diff --git a/apps/cli/src/backends/codex/utils/resolveCodexCliInvocation.ts b/apps/cli/src/backends/codex/utils/resolveCodexCliInvocation.ts
+index 382949fd1eef95c3ef24db0be0288a9ae26b09b5..22052ace02b7ce3031c4a661aaba75d8c46d00fd 100644
+--- a/apps/cli/src/backends/codex/utils/resolveCodexCliInvocation.ts
++++ b/apps/cli/src/backends/codex/utils/resolveCodexCliInvocation.ts
+@@ -7,6 +7,7 @@ import { resolveWindowsCommandPath } from '@happier-dev/cli-common/process';
+ import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
+ import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
+ import { isBun } from '@/utils/runtime';
++import { assertUnownedCodexLaunchAllowed } from './restrictedCodexLaunch';
+ 
+ const JAVA_SCRIPT_ENTRYPOINT_EXTENSION = /\.(?:c?js|mjs)$/i;
+ 
+@@ -80,6 +81,7 @@ export async function resolveCodexCliInvocation(params: Readonly<{
+     overrideEnvVarKeys?: readonly string[];
+     targetLabel?: string;
+ }>): Promise<Readonly<{ command: string; args: string[] }>> {
++    assertUnownedCodexLaunchAllowed(params.processEnv);
+     const processEnv = params.processEnv ?? process.env;
+     const cwd = params.cwd ?? process.cwd();
+     const command =
+diff --git a/apps/cli/src/backends/codex/utils/restrictedCodexLaunch.ts b/apps/cli/src/backends/codex/utils/restrictedCodexLaunch.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..82cd3809650c01d35262be18ea6db40a79d2cf11
+--- /dev/null
++++ b/apps/cli/src/backends/codex/utils/restrictedCodexLaunch.ts
+@@ -0,0 +1,10 @@
++import { isRestrictedDeploymentConfigured } from '@/security/restrictedDeployment/policy';
++
++/** A narrowed child environment must not clear the host's restricted mode. */
++export function requiresOwnedCodexLaunch(env?: NodeJS.ProcessEnv): boolean {
++    return isRestrictedDeploymentConfigured() || (env !== undefined && isRestrictedDeploymentConfigured(env));
++}
++
++export function assertUnownedCodexLaunchAllowed(env?: NodeJS.ProcessEnv): void {
++    if (requiresOwnedCodexLaunch(env)) throw new Error('restricted_codex_owner_required');
++}
