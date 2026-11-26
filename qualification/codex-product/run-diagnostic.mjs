@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -228,6 +228,9 @@ async function main(args) {
     phase = "synthetic-queue-lifetime";
     await witnessQueueAndLifetime(createCodexAppServerClient);
     steps.push("synthetic-queued-abort-expiry-null-wait-terminal-no-replay");
+    const projectRename = join(scratch, "project-renamed");
+    await rename(project, projectRename);
+    await rename(projectRename, project);
     let owner;
     let codex;
     try {
@@ -244,6 +247,9 @@ async function main(args) {
         initializeRequestOptions: { signal: AbortSignal.timeout(35000) },
       });
       steps.push("maintained-initialize-initialized");
+      phase = "owned-project-custody";
+      await assert.rejects(rename(project, projectRename), { code: /^(EPERM|EACCES|EBUSY)$/ });
+      assert.ok(existsSync(join(project, ".git")) && !existsSync(projectRename));
       phase = "native-thread-start";
       const thread = await codex.request("thread/start", {
         cwd: project, sandbox: "read-only", approvalPolicy: "never",
@@ -276,6 +282,10 @@ async function main(args) {
     });
     assert.ok(!existsSync(join(home, "auth.json")));
     steps.push("exact-root-job-native-io-settlement");
+    phase = "project-custody-release";
+    await rename(project, projectRename);
+    await rename(projectRename, project);
+    steps.push("native-project-rename-refused-only-while-owned");
     phase = "native-carrier-loss";
     const faultRoot = join(scratch, "carrier-loss");
     await mkdir(faultRoot);
@@ -316,7 +326,7 @@ async function main(args) {
   } catch (error) {
     const errorKind = error instanceof Error ? error.name : null;
     const safeMessage = errorKind !== null && typeof error.message === "string"
-      && /^(diagnostic_(?:owner|git)_[a-z_]+|unexpected_[a-z_]+|Codex owned stdio failed closed \([a-z]+\))$/.test(error.message)
+      && /^(diagnostic_(?:owner|git)_[a-z0-9_]{1,96}|unexpected_[a-z_]+|Codex owned stdio failed closed \([a-z]+\))$/.test(error.message)
       ? error.message : undefined;
     return { status: "FAIL", scope: "local-maintained-client-no-turn", phase, errorKind, safeMessage, steps, settlement };
   } finally {

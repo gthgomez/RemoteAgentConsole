@@ -37,6 +37,13 @@ The root, job and native I/O results are recorded separately from provider
 outcomes. A forced carrier kill or missing settlement record is not proof of
 native settlement.
 
+The diagnostic reuses the Windows policy reader's fixed-volume,
+handle-relative path walk and retains the project and executable directory
+chains for the native job's lifetime. It hashes an open, non-reparse image.
+The witness checks that a disposable project can be renamed before and after
+ownership, but not while it is serving. This is not an enrolled policy, a proof
+of custody over every file below the root, or a qualified Windows loader.
+
 ## Run locally without a listener
 
 On Windows x64, build the owner into a disposable artifacts directory with the

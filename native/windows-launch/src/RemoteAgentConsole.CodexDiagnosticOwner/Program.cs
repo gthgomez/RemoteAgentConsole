@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
+using Rac.WindowsPolicy.Helper;
 using RemoteAgentConsole.WindowsLaunch;
 
 // Local witness only: no listener, owner IPC server, command selector, live home
@@ -26,9 +27,26 @@ internal static class Program
                 return 2;
             return await Run(args[0], args[1]).ConfigureAwait(false);
         }
+        catch (PolicyFailureException failure)
+        {
+            Console.Error.WriteLine("F policy_" + failure.Code.Replace('-', '_'));
+            return 3;
+        }
+        catch (LaunchFailureException failure)
+        {
+            Console.Error.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"F launch_{(int)failure.Stage}_{failure.Win32Error}"));
+            return 3;
+        }
+        catch (IOException)
+        {
+            Console.Error.WriteLine("F io");
+            return 3;
+        }
         catch (Exception)
         {
             // Never dump paths, configuration, protocol bytes or exception text.
+            Console.Error.WriteLine("F unexpected");
             return 3;
         }
     }
@@ -39,9 +57,12 @@ internal static class Program
             || !string.Equals(Path.GetFileName(codex), "codex.exe", StringComparison.OrdinalIgnoreCase))
             return 2;
 
-        // Retain a deny-write/delete file handle for this diagnostic launch. This
-        // does not attest ancestor custody or qualify a production executable.
-        using var image = new FileStream(codex, FileMode.Open, FileAccess.Read, FileShare.Read);
+        // Reuse the fixed-volume/component-relative policy reader. Keep the
+        // executable directory chain and exact image open across job lifetime.
+        // The expected digest is not enrollment or installer approval.
+        using var imageDirectory = ProjectDirectoryIdentityReader.Capture(Path.GetDirectoryName(codex)!);
+        using var imageHandle = imageDirectory.OpenRegularFile(Path.GetFileName(codex));
+        using var image = new FileStream(imageHandle, FileAccess.Read);
         if (Convert.ToHexString(SHA256.HashData(image)) != CodexDigest) return 2;
         var project = Path.Combine(root, "project");
         var home = Path.Combine(root, "home");
@@ -49,6 +70,7 @@ internal static class Program
         if (!Directory.Exists(Path.Combine(project, ".git")) || !Directory.Exists(home)
             || !Directory.Exists(temp) || Directory.GetFileSystemEntries(home).Length != 0)
             return 2;
+        using var projectLease = ProjectDirectoryIdentityReader.Capture(project);
 
         var system = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -60,7 +82,7 @@ internal static class Program
             ["HTTP_PROXY"] = "http://127.0.0.1:1", ["HTTPS_PROXY"] = "http://127.0.0.1:1",
             ["ALL_PROXY"] = "http://127.0.0.1:1", ["NO_COLOR"] = "1",
         };
-        var contract = LaunchContract.Create(codex, project,
+        var contract = LaunchContract.Create(codex, projectLease.Snapshot.DirectoryPath,
             ["--disable", "plugins", "--disable", "apps", "--disable", "remote_plugin",
                 "app-server", "--listen", "stdio://"], environment);
 

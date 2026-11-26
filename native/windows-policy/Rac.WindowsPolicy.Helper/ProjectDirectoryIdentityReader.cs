@@ -17,6 +17,13 @@ internal static class ProjectDirectoryIdentityReader
 
     internal static ProjectDirectoryIdentitySnapshot Read(string input)
     {
+        using var lease = Capture(input);
+        return lease.Snapshot;
+    }
+
+    /// <summary>Retain the verified local directory and its ancestor chain.</summary>
+    internal static ProjectDirectoryLease Capture(string input)
+    {
         var shape = PolicyPath.Parse(input);
         var handles = new List<SafeFileHandle>();
         try
@@ -46,9 +53,8 @@ internal static class ProjectDirectoryIdentityReader
                 throw Denied("volume-identity-mismatch");
             }
 
-            // The handle is held read-only with no write/delete sharing, but this is
-            // still a one-shot probe. Re-query the directory state before releasing
-            // the handle so an unstable or replaced object fails closed.
+            // Re-query the directory state before handing the held chain to the
+            // caller. The one-shot probe still releases it before reporting.
             var identityAfter = HandleQueries.GetIdentity(current, "directory-changed");
             var standardAfter = HandleQueries.GetStandardInfo(current, "directory-changed");
             var basicAfter = HandleQueries.GetBasicInfo(current, "directory-changed");
@@ -79,7 +85,7 @@ internal static class ProjectDirectoryIdentityReader
                 throw Denied("directory-volume-mismatch");
             }
 
-            return new ProjectDirectoryIdentitySnapshot(
+            var snapshot = new ProjectDirectoryIdentitySnapshot(
                 SchemaVersion: SchemaVersion,
                 Status: "ok",
                 Mode: Mode,
@@ -91,13 +97,15 @@ internal static class ProjectDirectoryIdentityReader
                     IdHex: identityAfter.FileIdHex,
                     ComponentCount: shape.Components.Length),
                 Identity: ComposeIdentity(volumeGuid, identityAfter.FileIdHex));
+            return new ProjectDirectoryLease(snapshot, handles);
         }
-        finally
+        catch
         {
             for (var index = handles.Count - 1; index >= 0; index--)
             {
                 handles[index].Dispose();
             }
+            throw;
         }
     }
 
@@ -195,4 +203,46 @@ internal static class ProjectDirectoryIdentityReader
             : path;
 
     private static PolicyFailureException Denied(string code) => new(code, 3);
+}
+
+/// <summary>Pin one directory chain; not an enrollment or sandbox decision.</summary>
+internal sealed class ProjectDirectoryLease(
+    ProjectDirectoryIdentitySnapshot snapshot,
+    List<SafeFileHandle> handles) : IDisposable
+{
+    internal ProjectDirectoryIdentitySnapshot Snapshot { get; } = snapshot;
+
+    internal SafeFileHandle OpenRegularFile(string name)
+    {
+        ObjectDisposedException.ThrowIf(handles.Count == 0, this);
+        if (string.IsNullOrEmpty(name) || name != Path.GetFileName(name))
+            throw new ArgumentException("A local component is required.", nameof(name));
+        var path = PolicyPath.Parse(Path.Combine(Snapshot.DirectoryPath, name)).NormalizedPath;
+        var file = HandleQueries.OpenLeafComponent(handles[^1], name);
+        try
+        {
+            var attributes = HandleQueries.GetAttributeTag(file, "image-identity");
+            if ((attributes.FileAttributes & (NativeMethods.FileAttributeReparsePoint
+                    | NativeMethods.FileAttributeDirectory | NativeMethods.FileAttributeDevice
+                    | NativeMethods.FileAttributeOffline | NativeMethods.FileAttributeRecallOnOpen
+                    | NativeMethods.FileAttributeRecallOnDataAccess)) != 0
+                || attributes.ReparseTag != 0
+                || !string.Equals(path, HandleQueries.GetFinalDosPath(file, "image-identity"), StringComparison.Ordinal)
+                || HandleQueries.GetStandardInfo(file, "image-identity").DeletePending != 0)
+                throw new IOException("The requested file is not a stable regular file.");
+            return file;
+        }
+        catch
+        {
+            file.Dispose();
+            throw;
+        }
+    }
+
+    public void Dispose()
+    {
+        for (var index = handles.Count - 1; index >= 0; index--)
+            handles[index].Dispose();
+        handles.Clear();
+    }
 }

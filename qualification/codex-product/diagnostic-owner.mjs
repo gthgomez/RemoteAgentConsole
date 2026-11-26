@@ -68,6 +68,8 @@ export async function openDiagnosticOwner({ ownerExe, codexExe, scratch, signal 
         write.resolve();
       } else if (line === "N" || line === "U") {
         fail(line === "N" ? "native_refused" : "native_delivery_unknown");
+      } else if (/^F (?:policy_[a-z_]{1,64}|launch_[0-9]{1,3}_[0-9]{1,10}|io|unexpected)$/.test(line)) {
+        fail(line.slice(2));
       } else {
         const result = /^S ([01]) ([01]) ([01]) (0|[1-9][0-9]{0,8})$/.exec(line);
         if (!result || settleRecord) {
@@ -128,7 +130,7 @@ export async function openDiagnosticOwner({ ownerExe, codexExe, scratch, signal 
     if (!await Promise.race([ready.result, admission.result, delay(20000, false, { signal: stop.signal })]) || failure) {
       await dispose().catch(() => undefined);
       signal?.throwIfAborted();
-      throw new Error("diagnostic_owner_not_ready");
+      throw failure ?? new Error("diagnostic_owner_not_ready");
     }
   } finally {
     signal?.removeEventListener("abort", onAbort);

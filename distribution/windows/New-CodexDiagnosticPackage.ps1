@@ -25,7 +25,7 @@ if (!(Test-Path -LiteralPath (Split-Path -Parent $Output) -PathType Container)) 
 
 $ownerName = 'RemoteAgentConsole.CodexDiagnosticOwner'
 $payload = @("$ownerName.exe", "$ownerName.dll", "$ownerName.deps.json", "$ownerName.runtimeconfig.json",
-             'RemoteAgentConsole.WindowsLaunch.dll')
+             'RemoteAgentConsole.WindowsLaunch.dll', 'rac-windows-policy-helper.dll')
 foreach ($name in $payload) {
     $file = Get-Item -LiteralPath (Join-Path $OwnerBuild $name)
     if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {

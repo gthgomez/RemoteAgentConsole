@@ -5,5 +5,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../RemoteAgentConsole.WindowsLaunch/RemoteAgentConsole.WindowsLaunch.csproj" />
+    <ProjectReference Include="../../../windows-policy/Rac.WindowsPolicy.Helper/Rac.WindowsPolicy.Helper.csproj" />
   </ItemGroup>
 </Project>

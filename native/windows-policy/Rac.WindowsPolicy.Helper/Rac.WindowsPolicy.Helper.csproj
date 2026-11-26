@@ -18,4 +18,8 @@
     <Deterministic>true</Deterministic>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="RemoteAgentConsole.CodexDiagnosticOwner" />
+  </ItemGroup>
+
 </Project>
